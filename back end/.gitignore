@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.*
+!.env.test.example
+generated/
+uploads/
+uploads-test/
+*.log
+
+*-firebase-adminsdk-*.json
+dacs-firebase-admin.json

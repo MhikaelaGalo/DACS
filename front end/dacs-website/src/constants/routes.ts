@@ -1,0 +1,25 @@
+export const ROUTES = {
+  home: "/",
+  register: "/register",
+  signIn: "/sign-in",
+  forgotPassword: "/forgot-password",
+  about: "/about",
+  products: "/products",
+  seminars: "/seminars",
+  seminarRegistration: "/seminars/register",
+  account: "/account",
+  accountFarm: "/account/farm",
+  accountModules: "/account/modules",
+  accountOrders: "/account/orders",
+  accountCertificates: "/account/certificates",
+  accountSecurity: "/account/security",
+  forms: "/account/forms",
+  accountTickets: "/account/tickets",
+  orderPs: "/order/ps",
+  orderF1: "/order/f1",
+  bookingConfirmed: "/booking-confirmed",
+  privacyPolicy: "/privacy-policy",
+  termsAndConditions: "/terms-and-conditions",
+} as const;
+
+export type RouteKey = keyof typeof ROUTES;

@@ -1,0 +1,1456 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  OWNER_EXECUTIVE
+  IT_STAFF
+  ADMINISTRATIVE_STAFF
+  CLIENT_FARMER
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum ActivityOutcome {
+  SUCCESS
+  FAILURE
+}
+
+enum ProductCategory {
+  PARENT_STOCK
+  F1
+  VETERINARY_PRODUCT
+}
+
+enum OrderType {
+  PARENT_STOCK
+  F1
+  VETERINARY_PRODUCT
+  SEMINAR
+}
+
+/*
+ * What an order item sells: a catalog product (the original model) or
+ * paid access to one seminar module. Exactly one of productId /
+ * seminarModuleId is set, matching this discriminator (enforced by a
+ * CHECK constraint in the migration).
+ */
+enum OrderItemType {
+  PRODUCT
+  SEMINAR_MODULE
+}
+
+enum OrderStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAYMENT_SUBMITTED
+  PAYMENT_VERIFIED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum FulfillmentMethod {
+  PICKUP
+  LBC_BRANCH
+  AIRPORT
+  DELIVERY
+}
+
+enum PaymentType {
+  DEPOSIT
+  BALANCE
+  FULL
+  SHIPPING_FEE
+  PROCESSING_FEE
+}
+
+enum PaymentStatus {
+  SUBMITTED
+  VERIFIED
+  REJECTED
+}
+
+/*
+ * Provenance for orders and payments: LIVE rows come from the normal
+ * customer workflow; HISTORICAL_IMPORT rows were migrated from legacy
+ * spreadsheets and never went through the live pipeline (no status
+ * replay, no notifications, no proof uploads).
+ */
+enum RecordSource {
+  LIVE
+  HISTORICAL_IMPORT
+}
+
+enum CertificateRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BreederEligibilityStatus {
+  PENDING
+  ELIGIBLE
+  INELIGIBLE
+}
+
+enum BreederCertificationStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  INELIGIBLE
+}
+
+enum InquiryTicketStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  RESPONDED
+  CLOSED
+}
+
+enum ImportErrorType {
+  DUPLICATE
+  INCOMPLETE
+  INVALID
+}
+
+enum HistoricalRecordType {
+  BREEDER_CERTIFICATE
+  SEMINAR
+  PARENT_STOCK
+  ORDER
+}
+
+enum HistoricalValidationStatus {
+  VALID
+  PARTIAL
+  NEEDS_REVIEW
+  INVALID
+}
+
+enum NotificationType {
+  NEW_CUSTOMER
+  NEW_ORDER
+  NEW_TICKET
+  CERTIFICATE_APPROVED
+  CERTIFICATE_EXPIRED
+  ORDER_AUTO_CANCELLED
+}
+
+model User {
+  id String @id @default(uuid())
+
+  // Null until the person signs in for the first time: an Owner can
+  // pre-authorize a staff member's Google email via POST /api/users,
+  // and /api/auth/sync links the Firebase identity to this row on
+  // their first verified sign-in.
+  firebaseUid String?       @unique @map("firebase_uid")
+  email       String        @unique
+  role        UserRole      @default(CLIENT_FARMER)
+  status      AccountStatus @default(ACTIVE)
+
+  // Display identity for staff directories. displayName is refreshed
+  // from the Google profile (ID-token name claim) on every sync.
+  displayName String? @map("display_name")
+  phoneNumber String? @map("phone_number")
+
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  customerProfile      CustomerProfile?
+  activityLogs         ActivityLog[]
+  orderStatusChanges   OrderStatusHistory[]
+  verifiedPayments     Payment[]              @relation("PaymentVerifier")
+  paymentStatusChanges PaymentStatusHistory[] @relation("PaymentStatusChanger")
+  certificateReviews   CertificateRequest[]   @relation("CertificateReviewer")
+
+  certificateFilesUploaded CertificateRequest[] @relation("CertificateFileUploader")
+  certificatesIssued       CertificateRequest[] @relation("CertificateIssuer")
+
+  breederEligibilityEvaluations BreederEligibility[]   @relation("BreederEligibilityEvaluator")
+  breederCertificationsIssued   BreederCertification[] @relation("BreederCertificationIssuer")
+
+  assignedInquiryTickets InquiryTicket[]       @relation("InquiryAssignedTo")
+  inquiryEmailResponses  InquiryTicket[]       @relation("InquiryEmailRespondedBy")
+  inquiryStatusChanges   TicketStatusHistory[] @relation("InquiryStatusChangedBy")
+
+  faqsCreated Faq[] @relation("FaqCreatedBy")
+  faqsUpdated Faq[] @relation("FaqUpdatedBy")
+
+  formsCreated Form[] @relation("FormCreatedBy")
+  formsUpdated Form[] @relation("FormUpdatedBy")
+
+  historicalFilesUploaded   HistoricalFile[]         @relation("HistoricalFileUploader")
+  spreadsheetImportsCreated SpreadsheetImport[]      @relation("SpreadsheetImportCreator")
+  importErrorsResolved      ImportError[]            @relation("ImportErrorResolver")
+  historicalRecordsReviewed HistoricalSourceRecord[] @relation("HistoricalRecordReviewer")
+
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
+
+  dashboardVisuals       DashboardVisual[]
+  rolePermissionsUpdated RolePermission[]  @relation("RolePermissionUpdatedBy")
+
+  @@map("users")
+}
+
+model CustomerProfile {
+  id             String  @id @default(uuid())
+  customerNumber String  @unique @map("customer_number")
+  userId         String? @unique @map("user_id")
+
+  firstName  String  @map("first_name")
+  middleName String? @map("middle_name")
+  lastName   String  @map("last_name")
+  suffix     String?
+
+  occupation   String?
+  phoneNumber  String? @map("phone_number")
+  contactEmail String? @map("contact_email")
+  facebookName String? @map("facebook_name")
+
+  addressLine1     String? @map("address_line_1")
+  barangay         String?
+  cityMunicipality String? @map("city_municipality")
+  province         String?
+  region           String?
+  postalCode       String? @map("postal_code")
+
+  profileImageUrl String? @map("profile_image_url")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
+
+  user     User?     @relation(fields: [userId], references: [id])
+  farms    Farm[]
+  orders   Order[]
+  payments Payment[]
+
+  // Which spreadsheet import created this profile (null for profiles
+  // registered normally). Historical customers have userId null until a
+  // matching Firebase account claims them.
+  sourceImportId String? @map("source_import_id")
+
+  seminarEnrollments  SeminarEnrollment[]
+  certificateRequests CertificateRequest[]
+  breederMonitorings  BreederMonitoring[]
+  inquiryTickets      InquiryTicket[]
+  formSubmissions     FormSubmission[]
+
+  historicalSourceRecords HistoricalSourceRecord[]
+
+  sourceImport SpreadsheetImport? @relation("ImportedCustomers", fields: [sourceImportId], references: [id], onDelete: SetNull)
+
+  @@index([archivedAt])
+  @@map("customer_profiles")
+}
+
+model Farm {
+  id                String @id @default(uuid())
+  customerProfileId String @map("customer_profile_id")
+
+  farmName String @map("farm_name")
+
+  addressLine1     String? @map("address_line_1")
+  barangay         String?
+  cityMunicipality String? @map("city_municipality")
+  province         String?
+  region           String?
+  postalCode       String? @map("postal_code")
+
+  farmLogoUrl String? @map("farm_logo_url")
+  isPrimary   Boolean @default(false) @map("is_primary")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id])
+
+  breederMonitorings      BreederMonitoring[]
+  historicalSourceRecords HistoricalSourceRecord[]
+
+  @@index([archivedAt])
+  @@map("farms")
+}
+
+model Product {
+  id String @id @default(uuid())
+
+  productCode String @unique @map("product_code")
+
+  name        String
+  category    ProductCategory
+  description String?
+
+  unit String?
+
+  unitPrice Decimal @map("unit_price") @db.Decimal(12, 2)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orderItems OrderItem[]
+
+  @@index([category])
+  @@index([isActive])
+  @@index([name])
+  @@map("products")
+}
+
+model Order {
+  id String @id @default(uuid())
+
+  orderNumber String @unique @map("order_number")
+
+  customerProfileId String @map("customer_profile_id")
+
+  orderType OrderType @map("order_type")
+
+  status OrderStatus @default(PENDING)
+
+  dateNeeded DateTime? @map("date_needed") @db.Date
+  hatchDate  DateTime? @map("hatch_date") @db.Date
+
+  // Release date of a Parent Stock order is the reference point for the
+  // breeder 90-day eligibility rule later (Requirement 7).
+  releasedAt DateTime? @map("released_at")
+
+  receiverName     String? @map("receiver_name")
+  receiverFacebook String? @map("receiver_facebook")
+  receiverContact  String? @map("receiver_contact")
+
+  fulfillmentMethod FulfillmentMethod? @map("fulfillment_method")
+
+  deliveryAddress String? @map("delivery_address")
+  airportLocation String? @map("airport_location")
+  pickupBranch    String? @map("pickup_branch")
+
+  instructions String?
+
+  // Agreed payment split for the quotation ("30% deposit / 70% balance").
+  // The split and both due dates vary per order, so they are data, not
+  // rules. balancePercent is always 100 - depositPercent.
+  depositPercent Int?      @map("deposit_percent")
+  depositDueDate DateTime? @map("deposit_due_date") @db.Date
+  balanceDueDate DateTime? @map("balance_due_date") @db.Date
+
+  subtotal    Decimal @default(0) @db.Decimal(12, 2)
+  feeTotal    Decimal @default(0) @map("fee_total") @db.Decimal(12, 2)
+  totalAmount Decimal @default(0) @map("total_amount") @db.Decimal(12, 2)
+
+  // Checkout + 14 days: the moment an unpaid order is auto-cancelled by
+  // the backend sweep. Stamped at creation for LIVE orders; NULL for
+  // historical imports, which are never auto-cancelled.
+  paymentDeadlineAt DateTime? @map("payment_deadline_at")
+
+  // LIVE for the normal workflow; HISTORICAL_IMPORT for orders migrated
+  // from legacy spreadsheets (their createdAt holds the legacy order
+  // date and they carry no status-history replay).
+  source RecordSource @default(LIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+  payments      Payment[]
+
+  breederMonitoring BreederMonitoring?
+  inquiryTickets    InquiryTicket[]
+
+  // Lossless historical layer rows this order was created from.
+  sourceRecords HistoricalSourceRecord[]
+
+  @@index([customerProfileId])
+  @@index([status])
+  @@index([orderType])
+  @@index([source])
+  @@index([createdAt])
+  @@index([paymentDeadlineAt])
+  @@map("orders")
+}
+
+/*
+ * Parent Stock quotations price each breed line in up to three
+ * components (female / male / additional male, each with its own unit
+ * price). Those are modelled as separate products — e.g. "D109 –
+ * Female", "D109 – Male", "D109 – Add'l Male" — so every priced
+ * component is its own order item and no special columns are needed.
+ */
+model OrderItem {
+  id String @id @default(uuid())
+
+  orderId String @map("order_id")
+
+  // PRODUCT items link a catalog product; SEMINAR_MODULE items link a
+  // seminar module instead (paid module access). Exactly one link is
+  // set, per itemType (CHECK constraint order_items_item_link_check).
+  itemType        OrderItemType @default(PRODUCT) @map("item_type")
+  productId       String?       @map("product_id")
+  seminarModuleId String?       @map("seminar_module_id")
+
+  // Price snapshots: preserve what the product/module actually cost when
+  // the order was created, even if the source record changes later.
+  productCodeSnapshot String @map("product_code_snapshot")
+  productNameSnapshot String @map("product_name_snapshot")
+
+  unitPriceSnapshot Decimal @map("unit_price_snapshot") @db.Decimal(12, 2)
+
+  quantity Int
+
+  lineTotal Decimal @map("line_total") @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product       Product?       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  seminarModule SeminarModule? @relation(fields: [seminarModuleId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([seminarModuleId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id String @id @default(uuid())
+
+  orderId String @map("order_id")
+
+  changedByUserId String? @map("changed_by_user_id")
+
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy User? @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([changedByUserId])
+  @@map("order_status_history")
+}
+
+model Payment {
+  id String @id @default(uuid())
+
+  orderId           String @map("order_id")
+  customerProfileId String @map("customer_profile_id")
+
+  paymentType PaymentType @map("payment_type")
+
+  amount Decimal @db.Decimal(12, 2)
+
+  paymentDate     DateTime? @map("payment_date") @db.Date
+  referenceNumber String?   @map("reference_number")
+
+  status PaymentStatus @default(SUBMITTED)
+
+  // LIVE payments are proof uploads from customers; HISTORICAL_IMPORT
+  // rows are legacy payment summaries migrated from spreadsheets.
+  source RecordSource @default(LIVE)
+
+  // The proof file itself lives in file storage; PostgreSQL keeps the
+  // metadata and the URL (a tracker requirement). Nullable ONLY because
+  // HISTORICAL_IMPORT payments have no proof file — the live submission
+  // endpoint still requires the upload, so LIVE rows always carry all
+  // four fields.
+  proofOriginalName String? @map("proof_original_name")
+  proofMimeType     String? @map("proof_mime_type")
+  proofSizeBytes    Int?    @map("proof_size_bytes")
+  proofStorageUrl   String? @map("proof_storage_url")
+
+  verifiedByUserId  String?   @map("verified_by_user_id")
+  verifiedAt        DateTime? @map("verified_at")
+  verificationNotes String?   @map("verification_notes")
+  rejectionReason   String?   @map("rejection_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  order           Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  verifiedBy      User?           @relation("PaymentVerifier", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+
+  statusHistory PaymentStatusHistory[]
+
+  @@index([orderId])
+  @@index([customerProfileId])
+  @@index([status])
+  @@index([paymentType])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+model PaymentStatusHistory {
+  id String @id @default(uuid())
+
+  paymentId String @map("payment_id")
+
+  changedByUserId String? @map("changed_by_user_id")
+
+  fromStatus PaymentStatus? @map("from_status")
+  toStatus   PaymentStatus  @map("to_status")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation("PaymentStatusChanger", fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([paymentId, createdAt])
+  @@index([changedByUserId])
+  @@map("payment_status_history")
+}
+
+model SeminarModule {
+  id String @id @default(uuid())
+
+  moduleNumber Int @unique @map("module_number")
+
+  title       String
+  description String?
+
+  // The passing grade is configurable data entered by staff, never a
+  // number hard-coded in the backend.
+  passingScore Int @map("passing_score")
+
+  /*
+   * Module access price, entered by staff in the admin module editor.
+   * 0 = free (prerequisite-only access); > 0 = the farmer must buy the
+   * module through the normal DACS cart/checkout and staff must verify
+   * the payment before the module unlocks. Same money representation as
+   * products/orders — orders snapshot this value at checkout, so later
+   * price changes never affect already-purchased access.
+   */
+  price Decimal @default(0) @db.Decimal(12, 2)
+
+  isPublished Boolean @default(false) @map("is_published")
+
+  // Content was edited after the last publish (there is no version
+  // snapshot — farmers always read the live rows, so this flag is the
+  // staff-facing "re-publish to confirm the edited content" marker).
+  // Server-managed: set by content writes on a published module,
+  // cleared whenever isPublished is explicitly set.
+  hasUnpublishedChanges Boolean @default(false) @map("has_unpublished_changes")
+
+  // "Deleted" while farmer enrollment history exists: the row must stay
+  // (seminar_enrollments is Restrict) so DELETE archives instead.
+  // Archived modules are hidden from farmers and cannot be re-published.
+  archivedAt DateTime? @map("archived_at")
+
+  // Certificate-of-attendance template image for this module. The file
+  // itself lives in file storage (like profile images); only the URL is
+  // stored.
+  certificateTemplateUrl String? @map("certificate_template_url")
+
+  // Card artwork shown on the customer-facing seminar page. Staff manage
+  // it from the module editor; like the template above, only the URL is
+  // stored — the file lives in file storage (uploads/module-covers).
+  coverImageUrl String? @map("cover_image_url")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  videos      SeminarVideo[]
+  questions   SeminarQuestion[]
+  enrollments SeminarEnrollment[]
+  // Paid-access purchases of this module (SEMINAR_MODULE order items).
+  orderItems  OrderItem[]
+
+  @@index([isPublished])
+  @@map("seminar_modules")
+}
+
+model SeminarVideo {
+  id String @id @default(uuid())
+
+  moduleId String @map("module_id")
+
+  title       String
+  videoUrl    String  @map("video_url")
+  description String?
+
+  // Upload metadata: duration is probed client-side at upload time (the
+  // server has no media prober) and fileName is the original upload
+  // name shown in the admin listing. Both null for URL-based videos.
+  durationSeconds Int?    @map("duration_seconds")
+  fileName        String? @map("file_name")
+
+  displayOrder Int @default(1) @map("display_order")
+
+  // "Deleted" while watch history exists: seminar_progress cascades off
+  // videos, so a hard delete would silently destroy farmer history —
+  // DELETE archives the row instead. Archived videos are excluded from
+  // module payloads and from completion recalculation.
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  module SeminarModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  progress SeminarProgress[]
+
+  @@index([moduleId, displayOrder])
+  @@map("seminar_videos")
+}
+
+model SeminarQuestion {
+  id String @id @default(uuid())
+
+  moduleId String @map("module_id")
+
+  questionText String @map("question_text")
+
+  points Int @default(1)
+
+  displayOrder Int     @default(1) @map("display_order")
+  isActive     Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  module SeminarModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  choices SeminarChoice[]
+
+  @@index([moduleId, displayOrder])
+  @@map("seminar_questions")
+}
+
+model SeminarChoice {
+  id String @id @default(uuid())
+
+  questionId String @map("question_id")
+
+  choiceText String @map("choice_text")
+
+  // isCorrect must never reach a farmer's quiz payload; the API strips
+  // it before responding.
+  isCorrect Boolean @default(false) @map("is_correct")
+
+  displayOrder Int @default(1) @map("display_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  question SeminarQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@map("seminar_choices")
+}
+
+model SeminarEnrollment {
+  id String @id @default(uuid())
+
+  customerProfileId String @map("customer_profile_id")
+  moduleId          String @map("module_id")
+
+  startedAt      DateTime  @default(now()) @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  lastAccessedAt DateTime  @default(now()) @map("last_accessed_at")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  module          SeminarModule   @relation(fields: [moduleId], references: [id], onDelete: Restrict)
+
+  progress     SeminarProgress[]
+  quizAttempts QuizAttempt[]
+
+  // One enrollment per customer per module, never duplicates.
+  @@unique([customerProfileId, moduleId])
+  @@index([customerProfileId])
+  @@index([moduleId])
+  @@index([completedAt])
+  @@map("seminar_enrollments")
+}
+
+model SeminarProgress {
+  id String @id @default(uuid())
+
+  enrollmentId String @map("enrollment_id")
+  videoId      String @map("video_id")
+
+  progressPercent Int       @default(0) @map("progress_percent")
+  completedAt     DateTime? @map("completed_at")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  enrollment SeminarEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  video      SeminarVideo      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, videoId])
+  @@index([videoId])
+  @@map("seminar_progress")
+}
+
+model QuizAttempt {
+  id String @id @default(uuid())
+
+  enrollmentId String @map("enrollment_id")
+
+  score      Int
+  totalScore Int     @map("total_score")
+  percentage Decimal @db.Decimal(5, 2)
+  passed     Boolean
+
+  // Question + selected-choice IDs, kept as JSON to avoid another table
+  // in the MVP sprint.
+  answers Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  enrollment SeminarEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId])
+  @@index([passed])
+  @@map("quiz_attempts")
+}
+
+model CertificateRequest {
+  id String @id @default(uuid())
+
+  customerProfileId String @map("customer_profile_id")
+
+  status CertificateRequestStatus @default(PENDING)
+
+  requestedAt DateTime @default(now()) @map("requested_at")
+
+  reviewedByUserId String?   @map("reviewed_by_user_id")
+  reviewedAt       DateTime? @map("reviewed_at")
+  reviewNotes      String?   @map("review_notes")
+
+  // Filled only after approval.
+  certificateNumber   String?   @unique @map("certificate_number")
+  certificateIssuedAt DateTime? @map("certificate_issued_at")
+
+  /*
+   * Physical certificate issued by Dominant Asia Poultry Genetics.
+   * Approval (above) assigns the SEM number the moment Modules 1-3 are
+   * complete; the ISSUED certificate is the staff-uploaded file the
+   * farmer can actually download, and its 2-year validity starts only
+   * when staff explicitly issue it — never at upload or approval time.
+   *
+   * certificateFilePath is RELATIVE to the private uploads root (see
+   * fileStorage.service PRIVATE_UPLOADS_ROOT) and is served exclusively
+   * through the authenticated download endpoints — it must never appear
+   * in a farmer-facing response or under the public /uploads route.
+   */
+  certificateFilePath     String?   @map("certificate_file_path")
+  certificateFileName     String?   @map("certificate_file_name")
+  certificateFileMimeType String?   @map("certificate_file_mime_type")
+  certificateFileSize     Int?      @map("certificate_file_size")
+  fileUploadedAt          DateTime? @map("certificate_file_uploaded_at")
+  fileUploadedByUserId    String?   @map("certificate_file_uploaded_by_user_id")
+
+  // Official issuance to the customer. validUntil = issuedAt + 2 years,
+  // stored so the validity window survives any later file replacement;
+  // VALID/EXPIRED is always derived from validUntil, never stored.
+  issuedAt       DateTime? @map("issued_at")
+  issuedByUserId String?   @map("issued_by_user_id")
+  validUntil     DateTime? @map("valid_until")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  reviewedBy      User?           @relation("CertificateReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  fileUploadedBy  User?           @relation("CertificateFileUploader", fields: [fileUploadedByUserId], references: [id], onDelete: SetNull)
+  issuedBy        User?           @relation("CertificateIssuer", fields: [issuedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([customerProfileId])
+  @@index([status])
+  @@map("certificate_requests")
+}
+
+model BreederMonitoring {
+  id String @id @default(uuid())
+
+  customerProfileId String @map("customer_profile_id")
+  farmId            String @map("farm_id")
+
+  // One Parent Stock release = one breeder monitoring cycle, never
+  // duplicates.
+  parentStockOrderId String @unique @map("parent_stock_order_id")
+
+  // The paper's released date drives the 90-day rule: eligibleAt is
+  // always releasedAt + 90 days, calculated by the backend.
+  releasedAt DateTime @map("released_at")
+  eligibleAt DateTime @map("eligible_at")
+
+  // Observational fields are nullable: the record exists from Day 0 of
+  // the release, and monitoring details arrive over the 90 days.
+  // numberAlive and breedersClaimed are free text, not counts: staff
+  // record them as breed line + sex split (e.g. "D853 - 30f + 6m").
+  breederDate        DateTime? @map("breeder_date")
+  numberAlive        String?   @map("number_alive")
+  vaccinationRecords String?   @map("vaccination_records")
+  feedingManagement  String?   @map("feeding_management")
+  healthManagement   String?   @map("health_management")
+  weightManagement   String?   @map("weight_management")
+  breedersClaimed    String?   @map("breeders_claimed")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  customerProfile  CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  farm             Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  parentStockOrder Order           @relation(fields: [parentStockOrderId], references: [id], onDelete: Restrict)
+
+  eligibility    BreederEligibility?
+  certifications BreederCertification[]
+
+  @@index([customerProfileId])
+  @@index([farmId])
+  @@index([eligibleAt])
+  @@map("breeder_monitoring")
+}
+
+model BreederEligibility {
+  id String @id @default(uuid())
+
+  monitoringId String @unique @map("monitoring_id")
+
+  status BreederEligibilityStatus @default(PENDING)
+
+  eligibleAt DateTime @map("eligible_at")
+
+  evaluatedByUserId String?   @map("evaluated_by_user_id")
+  evaluatedAt       DateTime? @map("evaluated_at")
+  remarks           String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  monitoring  BreederMonitoring @relation(fields: [monitoringId], references: [id], onDelete: Cascade)
+  evaluatedBy User?             @relation("BreederEligibilityEvaluator", fields: [evaluatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([eligibleAt])
+  @@map("breeder_eligibility")
+}
+
+model BreederCertification {
+  id String @id @default(uuid())
+
+  monitoringId String @map("monitoring_id")
+
+  certificateNumber String @unique @map("certificate_number")
+
+  status BreederCertificationStatus @default(PENDING)
+
+  // Two-year validity per the paper; both dates are backend-calculated.
+  certifiedAt  DateTime @map("certified_at")
+  expiresAt    DateTime @map("expires_at")
+  renewalDueAt DateTime @map("renewal_due_at")
+
+  issuedByUserId String? @map("issued_by_user_id")
+  remarks        String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Restrict (not Cascade): certification history is retained across
+  // recertification cycles.
+  monitoring BreederMonitoring @relation(fields: [monitoringId], references: [id], onDelete: Restrict)
+  issuedBy   User?             @relation("BreederCertificationIssuer", fields: [issuedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([monitoringId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("breeder_certifications")
+}
+
+model InquiryTicket {
+  id String @id @default(uuid())
+
+  ticketNumber String @unique @map("ticket_number")
+
+  customerProfileId String @map("customer_profile_id")
+
+  // Optional: an inquiry may reference one of the customer's own orders.
+  relatedOrderId String? @map("related_order_id")
+
+  subject String
+  message String
+
+  /*
+   * Free-text until Dominant Asia confirms official category/priority
+   * lists — then these become enums or lookup tables.
+   */
+  category String?
+  priority String?
+
+  status InquiryTicketStatus @default(SUBMITTED)
+
+  assignedToUserId String?   @map("assigned_to_user_id")
+  assignedAt       DateTime? @map("assigned_at")
+
+  underReviewAt DateTime? @map("under_review_at")
+  respondedAt   DateTime? @map("responded_at")
+  closedAt      DateTime? @map("closed_at")
+
+  /*
+   * The actual response goes out through the organization's official
+   * email channel (per the paper) — DACS records who sent it, when,
+   * and an optional reference. There is no in-app chat.
+   */
+  emailRespondedByUserId String?   @map("email_responded_by_user_id")
+  emailRespondedAt       DateTime? @map("email_responded_at")
+  emailResponseReference String?   @map("email_response_reference")
+  emailResponseNotes     String?   @map("email_response_notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  customerProfile  CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  relatedOrder     Order?          @relation(fields: [relatedOrderId], references: [id], onDelete: SetNull)
+  assignedTo       User?           @relation("InquiryAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  emailRespondedBy User?           @relation("InquiryEmailRespondedBy", fields: [emailRespondedByUserId], references: [id], onDelete: SetNull)
+
+  statusHistory TicketStatusHistory[]
+
+  @@index([customerProfileId])
+  @@index([relatedOrderId])
+  @@index([status])
+  @@index([category])
+  @@index([priority])
+  @@index([assignedToUserId])
+  @@index([createdAt])
+  @@map("inquiry_tickets")
+}
+
+model TicketStatusHistory {
+  id String @id @default(uuid())
+
+  ticketId String @map("ticket_id")
+
+  fromStatus InquiryTicketStatus? @map("from_status")
+  toStatus   InquiryTicketStatus  @map("to_status")
+
+  changedByUserId String? @map("changed_by_user_id")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket    InquiryTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  changedBy User?         @relation("InquiryStatusChangedBy", fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@index([changedByUserId])
+  @@map("ticket_status_history")
+}
+
+model Faq {
+  id String @id @default(uuid())
+
+  // Free-text until Dominant Asia confirms an official category list.
+  category String?
+
+  question String
+  answer   String
+
+  // New FAQs start unpublished; only published ones appear on the
+  // public endpoint.
+  isPublished Boolean @default(false) @map("is_published")
+
+  displayOrder Int @default(1) @map("display_order")
+
+  // Which staff member created / last changed this FAQ.
+  createdByUserId String? @map("created_by_user_id")
+  updatedByUserId String? @map("updated_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdBy User? @relation("FaqCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("FaqUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([isPublished])
+  @@index([category])
+  @@index([displayOrder])
+  @@map("faqs")
+}
+
+// Admin form builder (customer-facing forms feed orders on submission,
+// per the client). A form's definition is its ordered field rows; the
+// builder saves the whole definition at once, so field updates are a
+// full replace inside one transaction.
+model Form {
+  id String @id @default(uuid())
+
+  name        String
+  description String?
+
+  // New forms start unpublished, like FAQs and seminar modules.
+  isPublished Boolean @default(false) @map("is_published")
+
+  // "Deleted" while submissions exist: form_submissions is Restrict, so
+  // DELETE archives the form instead of destroying submission history.
+  // Archived forms are hidden from the default staff list and cannot be
+  // edited or published.
+  archivedAt DateTime? @map("archived_at")
+
+  createdByUserId String? @map("created_by_user_id")
+  updatedByUserId String? @map("updated_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdBy User? @relation("FormCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("FormUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  fields      FormField[]
+  submissions FormSubmission[]
+
+  @@index([isPublished])
+  @@index([archivedAt])
+  @@map("forms")
+}
+
+model FormField {
+  id String @id @default(uuid())
+
+  formId String @map("form_id")
+
+  // One of the builder's block types (title, paragraph, short-answer,
+  // file-upload, dropdown, choice, number, checkbox, date, time,
+  // button, conditional). A plain string with a server-side allowlist —
+  // like free-text categories elsewhere — so new block types don't need
+  // an enum migration.
+  fieldType String @map("field_type")
+
+  // The typed-in content: a title's text, a field's label, a button's
+  // caption. May be empty while a form is still a draft.
+  label String
+
+  displayOrder Int @default(1) @map("display_order")
+
+  // Customer-input settings (mirroring the builder's block model).
+  required    Boolean @default(false)
+  placeholder String?
+  allowOther  Boolean @default(false) @map("allow_other")
+  // "12-hour" | "24-hour", only meaningful for time fields.
+  timeFormat  String? @map("time_format")
+
+  // Dropdown/choice option labels (a string array) — pure content with
+  // no referential needs, so JSON instead of a fourth table.
+  options Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  form Form @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@index([formId, displayOrder])
+  @@map("form_fields")
+}
+
+// Future customer-site submissions land here; the table exists now so
+// form deletion can be history-aware from day one (no submissions =
+// hard delete is safe, submissions = archive). Answers stay JSON like
+// quiz_attempts.answers.
+model FormSubmission {
+  id String @id @default(uuid())
+
+  formId            String  @map("form_id")
+  customerProfileId String? @map("customer_profile_id")
+
+  answers Json
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  form            Form             @relation(fields: [formId], references: [id], onDelete: Restrict)
+  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+
+  @@index([formId])
+  @@index([customerProfileId])
+  @@map("form_submissions")
+}
+
+model HistoricalFile {
+  id String @id @default(uuid())
+
+  originalName String @map("original_name")
+  storageUrl   String @map("storage_url")
+  mimeType     String @map("mime_type")
+  sizeBytes    Int    @map("size_bytes")
+
+  // Free-text organization: category (e.g. "Breeder Records") and year.
+  category    String?
+  year        Int?
+  description String?
+
+  uploadedByUserId String? @map("uploaded_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  uploadedBy User? @relation("HistoricalFileUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  imports SpreadsheetImport[]
+
+  @@index([category])
+  @@index([year])
+  @@index([createdAt])
+  @@map("historical_files")
+}
+
+model SpreadsheetImport {
+  id String @id @default(uuid())
+
+  historicalFileId String @map("historical_file_id")
+  sheetName        String @map("sheet_name")
+
+  rowsProcessed    Int @default(0) @map("rows_processed")
+  customersCreated Int @default(0) @map("customers_created")
+  farmsCreated     Int @default(0) @map("farms_created")
+  // Rows whose exact content was already captured by an earlier run
+  // (fingerprint match) — the mechanism that makes re-imports idempotent.
+  duplicateRows    Int @default(0) @map("duplicate_rows")
+  errorRows        Int @default(0) @map("error_rows")
+  // Orders-sheet bookkeeping (0 for customer/farm sheets).
+  ordersCreated     Int @default(0) @map("orders_created")
+  orderItemsCreated Int @default(0) @map("order_items_created")
+  paymentsCreated   Int @default(0) @map("payments_created")
+  // Lossless layer bookkeeping: historical_source_records created by
+  // this run (rows preserved even when no customer could be created).
+  sourceRecordsCreated Int @default(0) @map("source_records_created")
+
+  createdByUserId String? @map("created_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Import bookkeeping goes with its file; imported customers stay
+  // (their sourceImportId becomes null via SetNull).
+  historicalFile HistoricalFile @relation(fields: [historicalFileId], references: [id], onDelete: Cascade)
+  createdBy      User?          @relation("SpreadsheetImportCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  errors            ImportError[]
+  customersImported CustomerProfile[] @relation("ImportedCustomers")
+  sourceRecords     HistoricalSourceRecord[]
+
+  @@index([historicalFileId])
+  @@map("spreadsheet_imports")
+}
+
+/*
+ * Lossless historical layer: one row per imported spreadsheet row, with
+ * every meaningful source cell preserved (rawData) plus typed columns
+ * for the fields the admin UI searches and displays. Normalized DACS
+ * records (customer_profiles, farms) COEXIST with these rows — links
+ * are nullable because legacy rows may genuinely lack a valid identity.
+ *
+ * Records deliberately do NOT reference orders, seminar_enrollments or
+ * breeder_monitoring: the spreadsheet carries no evidence of modern
+ * transactions, so legacy seminar/breeder facts live here instead of
+ * fabricated operational rows.
+ *
+ * fingerprint (sha256 of sheet kind + canonicalized row content) makes
+ * imports idempotent: re-importing the same workbook matches existing
+ * fingerprints and creates nothing.
+ */
+model HistoricalSourceRecord {
+  id String @id @default(uuid())
+
+  // Import provenance. importId is SetNull (and filename/sheet/row are
+  // denormalized) so the archive layer outlives file deletion, exactly
+  // like imported customers do.
+  importId       String? @map("import_id")
+  sourceFilename String  @map("source_filename")
+  sheetName      String  @map("sheet_name")
+  rowNumber      Int     @map("row_number")
+
+  recordType  HistoricalRecordType @map("record_type")
+  fingerprint String               @unique
+
+  // The complete original row (header -> cell text), lossless.
+  rawData Json @map("raw_data")
+
+  // ---- Person fields common to all three sheets (raw, as written) ----
+  email      String?
+  fullName   String? @map("full_name")
+  phone      String?
+  facebook   String?
+  address    String?
+  occupation String?
+
+  // ---- Breeder Certificate Sheet: receiver / pickup logistics --------
+  pickupLocation   String? @map("pickup_location")
+  receiverPhone    String? @map("receiver_phone")
+  receiverFacebook String? @map("receiver_facebook")
+
+  // ---- Seminar Sheets ------------------------------------------------
+  // legacyModuleNumber is only set when the cell holds a plausible
+  // module number; the original cell text is always kept in
+  // legacyModuleRaw (some legacy cells are Excel-date artifacts).
+  // Legacy module numbers are NEVER auto-linked to seminar_modules —
+  // the in-person legacy seminars are not the modern e-learning modules.
+  legacyModuleNumber  Int?      @map("legacy_module_number")
+  legacyModuleRaw     String?   @map("legacy_module_raw")
+  seminarReference    String?   @map("seminar_reference")
+  registrationDate    DateTime? @map("registration_date") @db.Date
+  registrationDateRaw String?   @map("registration_date_raw")
+  payDate             DateTime? @map("pay_date") @db.Date
+  payDateRaw          String?   @map("pay_date_raw")
+
+  // ---- PS Sheets: farm + breeder report ------------------------------
+  farmName            String?   @map("farm_name")
+  farmAddress         String?   @map("farm_address")
+  breedersAcquiredAt  DateTime? @map("breeders_acquired_at") @db.Date
+  breedersAcquiredRaw String?   @map("breeders_acquired_raw")
+  breederHeads        String?   @map("breeder_heads")
+  vaccinationRecords  String?   @map("vaccination_records")
+  // The sheet's single "Feeding, Health, Weight Management" column,
+  // preserved unsplit (the modern split into three fields would be an
+  // invented interpretation).
+  managementRecords   String?   @map("management_records")
+  breedersClaimed     String?   @map("breeders_claimed")
+  farmLogoValue       String?   @map("farm_logo_value")
+  // Set only when farmLogoValue is an http(s) URL the UI can render.
+  farmLogoUrl         String?   @map("farm_logo_url")
+
+  // ---- Orders Sheets -------------------------------------------------
+  // The legacy order number exactly as written (kept even when no order
+  // row could be created); the full order payload lives in rawData and,
+  // when the row resolved cleanly, in the linked orders row.
+  orderNumber String? @map("order_number")
+
+  // ---- Validation / review -------------------------------------------
+  validationStatus   HistoricalValidationStatus @default(VALID) @map("validation_status")
+  // Array of { field, severity: "error"|"warning"|"info", message }.
+  validationMessages Json?                      @map("validation_messages")
+
+  reviewedAt       DateTime? @map("reviewed_at")
+  reviewedByUserId String?   @map("reviewed_by_user_id")
+  reviewNotes      String?   @map("review_notes")
+
+  // ---- Normalized links (nullable: legacy rows may lack identity) ----
+  customerProfileId String? @map("customer_profile_id")
+  farmId            String? @map("farm_id")
+  orderId           String? @map("order_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  import          SpreadsheetImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  customerProfile CustomerProfile?   @relation(fields: [customerProfileId], references: [id], onDelete: SetNull)
+  farm            Farm?              @relation(fields: [farmId], references: [id], onDelete: SetNull)
+  order           Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  reviewedBy      User?              @relation("HistoricalRecordReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([recordType])
+  @@index([validationStatus])
+  @@index([customerProfileId])
+  @@index([farmId])
+  @@index([orderId])
+  @@index([importId])
+  @@index([email])
+  @@index([sheetName])
+  @@index([legacyModuleNumber])
+  @@index([seminarReference])
+  @@index([orderNumber])
+  @@index([createdAt])
+  @@map("historical_source_records")
+}
+
+model ImportError {
+  id String @id @default(uuid())
+
+  importId String @map("import_id")
+
+  rowNumber Int             @map("row_number")
+  errorType ImportErrorType @map("error_type")
+  reason    String
+
+  // The full original row, preserved for manual review.
+  rawData Json @map("raw_data")
+
+  resolvedAt       DateTime? @map("resolved_at")
+  resolvedByUserId String?   @map("resolved_by_user_id")
+  resolutionNotes  String?   @map("resolution_notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  import     SpreadsheetImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  resolvedBy User?             @relation("ImportErrorResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([importId])
+  @@index([errorType])
+  @@index([resolvedAt])
+  @@map("import_errors")
+}
+
+/*
+ * In-app notifications (Requirement 12). Each row belongs to exactly
+ * one recipient; "notify all staff" fans out to one row per staff user
+ * so read state stays personal.
+ */
+model Notification {
+  id String @id @default(uuid())
+
+  userId String @map("user_id")
+
+  type    NotificationType
+  title   String
+  message String
+
+  // Optional pointer to the record the notification is about, so the
+  // frontend can link straight to it.
+  recordType String? @map("record_type")
+  recordId   String? @map("record_id")
+
+  readAt DateTime? @map("read_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+/*
+ * Per-user, per-type opt-outs. No row means the type is enabled — rows
+ * are only created when a user changes a preference.
+ */
+model NotificationPreference {
+  id String @id @default(uuid())
+
+  userId String @map("user_id")
+
+  type    NotificationType
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@map("notification_preferences")
+}
+
+model ActivityLog {
+  id     String  @id @default(uuid())
+  userId String? @map("user_id")
+
+  module      String
+  action      String
+  outcome     ActivityOutcome
+  description String?
+
+  recordType String? @map("record_type")
+  recordId   String? @map("record_id")
+
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+  metadata  Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  // Read-API filters (Settings > Audit Logs).
+  @@index([createdAt])
+  @@index([userId])
+  @@index([module])
+  @@index([action])
+  @@map("activity_logs")
+}
+
+/*
+ * Per-user dashboard layout (the admin dashboard's visual array). Each
+ * row is one visual's DEFINITION only — type, title, and the builder's
+ * field picks — never the analytical data itself, which the analytics
+ * endpoints compute live at render time.
+ */
+model DashboardVisual {
+  id String @id @default(uuid())
+
+  userId String @map("user_id")
+
+  // One of the builder's chart types (clustered-bar, line, pie, kpi,
+  // filled-map, ...). A plain string with a server-side allowlist, like
+  // form field types.
+  visualType String @map("visual_type")
+
+  title String
+
+  // Builder field picks, all IDs from the backend analytics field
+  // catalog (analytics.catalog.ts). dataset identifies the data source
+  // ("orders", "payments", ...); null on built-in visuals and on
+  // legacy visuals created against the removed sample table (those
+  // render an honest obsolete state, never numbers).
+  dataset     String?
+  xField      String? @map("x_field")
+  // day | month | quarter | year — only set when xField is a date.
+  xBucket     String? @map("x_bucket")
+  yField      String? @map("y_field")
+  // count | sum | avg | min | max, validated per measure.
+  aggregation String?
+  legendField String? @map("legend_field")
+
+  // Set for the app's shipped visuals (e.g. "monthly-sales"): the
+  // frontend renders those from its fixed chart registry.
+  builtin String?
+
+  displayOrder Int @default(1) @map("display_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, displayOrder])
+  @@map("dashboard_visuals")
+}
+
+/*
+ * Role-permission matrix (Settings > Roles and Permission). Rows are
+ * OVERRIDES of the code defaults in src/config/permissions.ts — no row
+ * means the default applies. Roles stay the fixed DACS UserRole enum;
+ * the matrix only configures which admin modules each staff role may
+ * use. OWNER_EXECUTIVE is never stored: the Owner always has every
+ * module, so the matrix cannot lock out its own administrators.
+ */
+model RolePermission {
+  id String @id @default(uuid())
+
+  role UserRole
+
+  // One of the admin permission modules ("Forms", "Historical Data",
+  // ...) — validated against PERMISSION_MODULES server-side.
+  permissionModule String @map("permission_module")
+
+  allowed Boolean
+
+  updatedByUserId String? @map("updated_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation("RolePermissionUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([role, permissionModule])
+  @@map("role_permissions")
+}

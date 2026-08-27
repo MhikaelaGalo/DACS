@@ -1,0 +1,10 @@
+# Dependencies and build output (dacs-website has its own .gitignore too)
+node_modules/
+.next/
+
+# Local editor/agent settings
+.claude/
+
+# Files over GitHub's 100MB limit (use Git LFS if these must be versioned)
+dacs-media/Video Project 9.mp4
+dacs-website/public/videos/video-project-9.mp4

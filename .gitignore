@@ -1,0 +1,75 @@
+# ==================================================
+# DACS GLOBAL GITIGNORE
+# ==================================================
+
+# -------------------------
+# Environment variables
+# -------------------------
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# -------------------------
+# Node dependencies
+# -------------------------
+node_modules/
+
+# -------------------------
+# Next.js / build output
+# -------------------------
+.next/
+out/
+dist/
+build/
+
+# -------------------------
+# Database backups
+# NEVER upload production DB backups
+# -------------------------
+*.dump
+*.sql
+*.bak
+
+# Prisma migrations are schema source code, not DB backups - keep them tracked.
+!**/prisma/migrations/**/*.sql
+
+# -------------------------
+# Uploaded/customer files
+# -------------------------
+uploads/
+uploads-private/
+uploads-test/
+uploads-private-test/
+
+# -------------------------
+# Customer/data exports
+# -------------------------
+*.csv
+
+# -------------------------
+# Logs
+# -------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -------------------------
+# Local AI/editor configuration
+# -------------------------
+.claude/
+.vscode/
+.idea/
+
+# -------------------------
+# Operating system files
+# -------------------------
+.DS_Store
+Thumbs.db
+
+# -------------------------
+# Temporary files
+# -------------------------
+tmp/
+temp/

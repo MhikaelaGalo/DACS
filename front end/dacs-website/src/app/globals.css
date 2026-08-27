@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #181818;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-dacs-red: #cc0000;
+  --color-dacs-dark: #181818;
+  --color-dacs-light: #f4f4f4;
+  --color-dacs-gray: #7d7d7d;
+  --color-dacs-muted: #6b6b6b;
+  --font-sans: var(--font-inter);
+  --font-josefin: var(--font-josefin-sans);
+  /* Layout tokens — the 1920px Figma frames render at 0.75 scale inside a
+     centered 1440px container (see RESCALE_RULES.md). */
+  --container-dacs: 1440px;
+  --radius-dacs-card: 15px;
+  --radius-dacs-input: 11px;
+  --shadow-dacs-card: 0px 0px 15px 0px rgba(0, 0, 0, 0.15);
+  /* Figma text nodes use CSS line-height: normal (~1.21 for Inter), not
+     Tailwind's 1.5 default — remap the site-wide `leading-normal` utility so
+     text blocks match the frames' vertical metrics. */
+  --leading-normal: normal;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), sans-serif;
+}
