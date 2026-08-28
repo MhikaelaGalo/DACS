@@ -32,6 +32,14 @@ import { HttpError } from "./utils/httpError";
 const app = express();
 
 /*
+ * Render terminates TLS at its edge proxy, which passes the client IP in
+ * X-Forwarded-For. Trust that single hop so the per-IP rate limiters key
+ * on the real client; without it express-rate-limit rejects the header
+ * outright (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR).
+ */
+app.set("trust proxy", 1);
+
+/*
  * ---------- CORS ----------
  * Development allows the local frontends by default. In production set
  * ALLOWED_ORIGINS to a comma-separated allowlist (customer site, admin
