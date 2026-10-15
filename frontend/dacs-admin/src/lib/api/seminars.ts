@@ -159,6 +159,21 @@ export async function reorderSeminarVideos(
   return response.data;
 }
 
+export async function replaceSeminarVideoFile(
+  moduleId: string,
+  videoId: string,
+  file: File,
+  durationSeconds: number | null
+): Promise<ApiSeminarVideo> {
+  const formData = new FormData();
+  formData.append("video", file);
+  if (durationSeconds) formData.append("durationSeconds", String(durationSeconds));
+  const response = await api.upload<{ data: ApiSeminarVideo }>(
+    `/api/seminars/modules/${moduleId}/videos/${videoId}/file`, formData, "PUT"
+  );
+  return response.data;
+}
+
 export async function deleteSeminarVideo(
   moduleId: string,
   videoId: string
@@ -246,4 +261,11 @@ export async function fetchCertificateFileBlob(
   requestId: string
 ): Promise<Blob> {
   return apiFetchBlob(`/api/seminars/certificates/${requestId}/file`);
+}
+
+export async function archiveCertificate(requestId: string): Promise<{ stored: boolean; fileName: string | null }> {
+  const response = await api.post<{ data: { stored: boolean; fileName: string | null } }>(
+    `/api/seminars/certificates/${requestId}/archive`
+  );
+  return response.data;
 }

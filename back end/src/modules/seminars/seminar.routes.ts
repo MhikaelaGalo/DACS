@@ -12,6 +12,8 @@ import {
 import {
   addQuestion,
   addVideo,
+  archiveCertificateStaff,
+  archiveMyCertificate,
   approveCertificate,
   createModule,
   deleteModule,
@@ -27,6 +29,7 @@ import {
   getProgressOverview,
   getMyProgress,
   removeCoverImage,
+  replaceVideoFile,
   listCertificateRequests,
   listModules,
   listMyCertificates,
@@ -124,6 +127,16 @@ seminarRouter.patch(
   loadDacsUser,
   authorizeRoles("OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"),
   editVideo
+);
+
+seminarRouter.put(
+  "/modules/:moduleId/videos/:videoId/file",
+  authenticateFirebase,
+  loadDacsUser,
+  authorizeRoles("OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"),
+  uploadLimiter,
+  uploadSingleVideo("video"),
+  replaceVideoFile
 );
 
 seminarRouter.patch(
@@ -278,6 +291,25 @@ seminarRouter.get(
   loadDacsUser,
   authorizeRoles("CLIENT_FARMER"),
   downloadMyCertificateFile
+);
+
+seminarRouter.post(
+  "/certificates/me/:requestId/archive",
+  authenticateFirebase,
+  requireVerifiedEmail,
+  loadDacsUser,
+  authorizeRoles("CLIENT_FARMER"),
+  uploadLimiter,
+  archiveMyCertificate
+);
+
+seminarRouter.post(
+  "/certificates/:requestId/archive",
+  authenticateFirebase,
+  loadDacsUser,
+  authorizeRoles("OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"),
+  uploadLimiter,
+  archiveCertificateStaff
 );
 
 seminarRouter.get(

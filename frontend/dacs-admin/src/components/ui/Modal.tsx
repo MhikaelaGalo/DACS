@@ -53,6 +53,7 @@ export function ConfirmDialog({
   destructive = false,
   onConfirm,
   onCancel,
+  busy = false,
 }: {
   message: string;
   detail?: string;
@@ -60,6 +61,7 @@ export function ConfirmDialog({
   destructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  busy?: boolean;
 }) {
   return (
     <div
@@ -76,15 +78,17 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
+            disabled={busy}
             className={`rounded-2xl px-7 py-3 font-semibold text-white hover:opacity-90 ${
               destructive ? "bg-dacs-red" : "bg-dacs-dark"
             }`}
           >
-            {confirmLabel}
+            {busy ? "Please wait…" : confirmLabel}
           </button>
           <button
             type="button"
             onClick={onCancel}
+            disabled={busy}
             className="rounded-2xl border border-dacs-dark/40 px-7 py-3 font-semibold hover:bg-dacs-light/50"
           >
             Cancel

@@ -485,6 +485,10 @@ export interface UpdateVideoInput {
   title?: string;
   videoUrl?: string;
   description?: string | null;
+  durationSeconds?: number | null;
+  fileName?: string | null;
+  /** Internal compare-and-swap guard for file replacement; not a request field. */
+  expectedVideoUrl?: string;
 }
 
 export interface CreateQuestionInput {
@@ -1044,19 +1048,32 @@ export async function updateSeminarVideo(
       );
     }
 
+    if (input.expectedVideoUrl !== undefined && video.videoUrl !== input.expectedVideoUrl) {
+      throw new HttpError(409, "This video changed while the file was uploading. Reload it and try again.");
+    }
+
     const data: Prisma.SeminarVideoUpdateInput = {};
     if (input.title !== undefined) data.title = input.title;
     if (input.videoUrl !== undefined) data.videoUrl = input.videoUrl;
     if (input.description !== undefined) data.description = input.description;
+    if (input.durationSeconds !== undefined) data.durationSeconds = input.durationSeconds;
+    if (input.fileName !== undefined) data.fileName = input.fileName;
 
     if (Object.keys(data).length === 0) {
       throw new HttpError(400, "At least one video field must be supplied.");
     }
 
-    const updated = await transaction.seminarVideo.update({
-      where: { id: videoId },
-      data,
-    });
+    let updated;
+    if (input.expectedVideoUrl !== undefined) {
+      const changed = await transaction.seminarVideo.updateMany({
+        where: { id: videoId, videoUrl: input.expectedVideoUrl, archivedAt: null },
+        data: data as Prisma.SeminarVideoUpdateManyMutationInput,
+      });
+      if (changed.count !== 1) throw new HttpError(409, "This video changed while the file was uploading. Reload it and try again.");
+      updated = await transaction.seminarVideo.findUniqueOrThrow({ where: { id: videoId } });
+    } else {
+      updated = await transaction.seminarVideo.update({ where: { id: videoId }, data });
+    }
 
     // Same content-change bookkeeping as adding a video.
     if (module.isPublished) {
@@ -1532,20 +1549,8 @@ export async function deleteSeminarVideo(
       result = "ARCHIVED";
     }
 
-    // Removing a video changes what "all videos watched" means, so
-    // every enrollment of the module is re-evaluated — a farmer who had
-    // finished everything else may complete right now.
-    const enrollments = await transaction.seminarEnrollment.findMany({
-      where: { moduleId },
-      select: { id: true },
-    });
-
-    for (const enrollment of enrollments) {
-      await recalculateEnrollmentCompletion(transaction, enrollment.id, {
-        userId: actorUserId,
-        meta,
-      });
-    }
+    // Media administration never issues or modifies farmer certificates.
+    // Incomplete enrollments are re-evaluated on the farmer's next progress/quiz write.
 
     // Same content-change bookkeeping as adding a video.
     if (module.isPublished) {
@@ -2558,7 +2563,8 @@ export async function reviewCertificateRequest(
  */
 
 export interface CertificateFilePayload {
-  absolutePath: string;
+  absolutePath?: string;
+  storageReference?: string;
   mimeType: string;
   fileName: string;
 }
@@ -2570,6 +2576,11 @@ function toCertificateFilePayload(row: {
   certificateNumber: string | null;
   id: string;
 }): CertificateFilePayload {
+  if (row.certificateFilePath?.startsWith("neon://")) {
+    return { storageReference: row.certificateFilePath,
+      mimeType: row.certificateFileMimeType ?? "image/jpeg",
+      fileName: row.certificateFileName ?? `dacs-certificate-${row.certificateNumber ?? row.id}.jpg` };
+  }
   const absolutePath = row.certificateFilePath
     ? resolvePrivateFile(row.certificateFilePath)
     : null;
@@ -2631,6 +2642,9 @@ export async function getMyCertificateFile(
     select: {
       id: true,
       issuedAt: true,
+      status: true,
+      certificateIssuedAt: true,
+      fileUploadedAt: true,
       certificateFilePath: true,
       certificateFileMimeType: true,
       certificateFileName: true,
@@ -2642,7 +2656,9 @@ export async function getMyCertificateFile(
     throw new HttpError(404, "Certificate was not found.");
   }
 
-  if (!request.issuedAt) {
+  // Generated copies of approved composites were already downloadable in the
+  // browser. Legacy staff-uploaded files still require official issuance.
+  if (!request.issuedAt && !(request.status === "APPROVED" && request.certificateIssuedAt && !request.fileUploadedAt && request.certificateFilePath?.startsWith("neon://"))) {
     throw new HttpError(404, "This certificate has not been issued yet.");
   }
 

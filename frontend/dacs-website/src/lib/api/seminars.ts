@@ -188,6 +188,13 @@ export async function listSeminarModules(): Promise<ApiSeminarModule[]> {
   return response.data;
 }
 
+export async function archiveMyCertificate(requestId: string): Promise<{ stored: boolean; fileName: string | null; mimeType: string | null }> {
+  const response = await api.post<{ data: { stored: boolean; fileName: string | null; mimeType: string | null } }>(
+    `/api/seminars/certificates/me/${requestId}/archive`
+  );
+  return response.data;
+}
+
 export async function getMyProgress(): Promise<ApiMyProgress> {
   const response = await api.get<{ data: ApiMyProgress }>(
     "/api/seminars/me/progress"

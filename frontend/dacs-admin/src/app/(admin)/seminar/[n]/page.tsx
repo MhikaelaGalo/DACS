@@ -8,14 +8,13 @@ import {
   ArrowLeft,
   ArrowUp,
   Check,
-  ImageIcon,
   Pencil,
-  PlayCircle,
   Plus,
   Trash2,
   Upload,
 } from "lucide-react";
 
+import { SeminarMediaEditor } from "@/components/seminars/SeminarMediaEditor";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { errorMessage } from "@/lib/api";
@@ -30,6 +29,7 @@ import {
   parseDuration,
   removeModuleCoverImage,
   reorderSeminarVideos,
+  replaceSeminarVideoFile,
   updateSeminarModule,
   updateSeminarQuestion,
   uploadModuleCoverImage,
@@ -133,10 +133,7 @@ function ModuleDetail({ moduleNumber }: { moduleNumber: number }) {
   const [correctIndex, setCorrectIndex] = useState<number | null>(null);
   const [questionError, setQuestionError] = useState<string | null>(null);
   const [savingQuestion, setSavingQuestion] = useState(false);
-  const [uploadingCover, setUploadingCover] = useState(false);
-  const [removingCover, setRemovingCover] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
-  const coverInput = useRef<HTMLInputElement>(null);
   const videoFileInput = useRef<HTMLInputElement>(null);
 
   const applyDetail = useCallback((detail: ApiSeminarModule) => {
@@ -358,18 +355,17 @@ function ModuleDetail({ moduleNumber }: { moduleNumber: number }) {
   }
 
   async function removeVideo(videoId: string) {
-    const previous = videos;
-    setVideos(videos.filter((entry) => entry.id !== videoId));
-    try {
-      await deleteSeminarVideo(moduleId, videoId);
-      markPending();
-    } catch (error) {
-      setVideos(previous);
-      showToast(
-        errorMessage(error, "Unable to remove the video. Please try again."),
-        "error"
-      );
-    }
+    await deleteSeminarVideo(moduleId, videoId);
+    setVideos((current) => current.filter((entry) => entry.id !== videoId));
+    markPending();
+    showToast("Video removed. Farmer history and certificates were preserved.");
+  }
+
+  async function replaceVideo(videoId: string, file: File, duration: number | null) {
+    const updated = await replaceSeminarVideoFile(moduleId, videoId, file, duration);
+    setVideos((current) => current.map((entry) => entry.id === videoId ? toVideoItem(updated) : entry));
+    markPending();
+    showToast("Video replaced. Existing completion records were preserved.");
   }
 
   /*
@@ -589,71 +585,14 @@ function ModuleDetail({ moduleNumber }: { moduleNumber: number }) {
     }
   }
 
-  /*
-   * Cover-image upload for the customer-facing seminar card. The file is
-   * validated here for fast feedback and again on the backend (magic
-   * bytes + 5 MB multer cap) before it is stored.
-   */
-  const COVER_TYPES = ["image/jpeg", "image/png", "image/webp"];
-  const COVER_MAX_BYTES = 5 * 1024 * 1024;
-
   async function uploadCover(file: File) {
-    if (uploadingCover) return;
-    if (!COVER_TYPES.includes(file.type)) {
-      showToast(
-        "Only JPG, PNG, and WebP images can be used as a module cover.",
-        "error"
-      );
-      return;
-    }
-    if (file.size > COVER_MAX_BYTES) {
-      showToast("The cover image must not exceed 5 MB.", "error");
-      return;
-    }
-    setUploadingCover(true);
-    try {
-      mergeModule(await uploadModuleCoverImage(moduleId, file));
-      appendAudit(
-        "Seminars",
-        "SEMINAR_COVER_IMAGE_UPDATED",
-        `Uploaded a cover image for Module ${moduleNumber}.`
-      );
-      showToast("Cover image updated.");
-    } catch (error) {
-      showToast(
-        errorMessage(
-          error,
-          "Unable to upload the cover image. Please try again."
-        ),
-        "error"
-      );
-    } finally {
-      setUploadingCover(false);
-    }
+    mergeModule(await uploadModuleCoverImage(moduleId, file));
+    showToast("Cover image updated.");
   }
 
   async function removeCover() {
-    if (removingCover) return;
-    setRemovingCover(true);
-    try {
-      mergeModule(await removeModuleCoverImage(moduleId));
-      appendAudit(
-        "Seminars",
-        "SEMINAR_COVER_IMAGE_REMOVED",
-        `Removed the cover image of Module ${moduleNumber}.`
-      );
-      showToast("Cover image removed.");
-    } catch (error) {
-      showToast(
-        errorMessage(
-          error,
-          "Unable to remove the cover image. Please try again."
-        ),
-        "error"
-      );
-    } finally {
-      setRemovingCover(false);
-    }
+    mergeModule(await removeModuleCoverImage(moduleId));
+    showToast("Cover image removed.");
   }
 
   async function publishModule() {
@@ -828,47 +767,23 @@ function ModuleDetail({ moduleNumber }: { moduleNumber: number }) {
 
           <div className="flex flex-col gap-3">
             {videos.map((video, index) => (
-              <div
-                key={video.id}
-                className="flex items-center gap-4 rounded-dacs-card bg-white p-4 shadow-dacs-card"
-              >
-                <div className="flex flex-col">
-                  <button
-                    type="button"
-                    aria-label="Move video up"
-                    onClick={() => void moveVideo(index, -1)}
-                    className="p-1 text-dacs-muted hover:text-dacs-dark"
-                  >
-                    <ArrowUp size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Move video down"
-                    onClick={() => void moveVideo(index, 1)}
-                    className="p-1 text-dacs-muted hover:text-dacs-dark"
-                  >
-                    <ArrowDown size={16} />
-                  </button>
+              <div key={video.id} className="rounded-dacs-card bg-white p-4 shadow-dacs-card">
+                <div className="mb-3 flex items-center gap-3">
+                  <div className="flex flex-col">
+                    <button type="button" aria-label="Move video up" disabled={index === 0}
+                      onClick={() => void moveVideo(index, -1)} className="p-1 text-dacs-muted disabled:opacity-30"><ArrowUp size={16} /></button>
+                    <button type="button" aria-label="Move video down" disabled={index === videos.length - 1}
+                      onClick={() => void moveVideo(index, 1)} className="p-1 text-dacs-muted disabled:opacity-30"><ArrowDown size={16} /></button>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words font-semibold">{video.title}</p>
+                    <p className="break-words text-sm text-dacs-muted">{video.duration}{video.fileName ? ` · ${video.fileName}` : ""}</p>
+                  </div>
+                  <span className="text-dacs-muted">{String(index + 1).padStart(2, "0")}</span>
                 </div>
-                <PlayCircle size={38} className="text-dacs-red" />
-                <div className="flex-1">
-                  <p className="font-semibold">{video.title}</p>
-                  <p className="text-sm text-dacs-muted">
-                    {video.duration}
-                    {video.fileName ? ` · ${video.fileName}` : ""}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Remove video"
-                  onClick={() => void removeVideo(video.id)}
-                  className="text-dacs-muted hover:text-dacs-red"
-                >
-                  <Trash2 size={18} />
-                </button>
-                <span className="text-dacs-muted">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
+                <SeminarMediaEditor kind="video" label={video.title} currentUrl={video.videoUrl}
+                  onSave={(file, duration) => replaceVideo(video.id, file, duration)}
+                  onRemove={() => removeVideo(video.id)} />
               </div>
             ))}
             {videos.length === 0 && (
@@ -1023,64 +938,11 @@ function ModuleDetail({ moduleNumber }: { moduleNumber: number }) {
 
         {/* Customer-card content (cover image + description) + passing grade */}
         <aside>
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-2xl font-bold">Module Cover Image</h2>
-            <button
-              type="button"
-              disabled={uploadingCover}
-              onClick={() => coverInput.current?.click()}
-              className="flex items-center gap-2 rounded-2xl bg-dacs-dark px-6 py-3 font-semibold text-white hover:opacity-90 disabled:opacity-60"
-            >
-              <Upload size={16} />
-              {uploadingCover
-                ? "Uploading…"
-                : seminarModule.coverImageUrl
-                  ? "Replace"
-                  : "Upload Image"}
-            </button>
-            <input
-              ref={coverInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void uploadCover(file);
-                event.target.value = "";
-              }}
-            />
-          </div>
-
-          <div className="rounded-dacs-card bg-white p-5 shadow-dacs-card">
-            {seminarModule.coverImageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={seminarModule.coverImageUrl}
-                alt={`Module ${moduleNumber} cover`}
-                className="aspect-[4/3] w-full rounded-lg border border-dacs-light object-cover"
-              />
-            ) : (
-              <div className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-dacs-dark/30 text-center text-dacs-muted">
-                <ImageIcon size={32} />
-                <p className="px-6 text-sm">
-                  No cover image yet — upload a JPG, PNG, or WebP (max 5 MB).
-                </p>
-              </div>
-            )}
-            <p className="mt-3 text-sm text-dacs-muted">
-              Shown on this module&apos;s card on the customer seminar page.
-            </p>
-            {seminarModule.coverImageUrl && (
-              <button
-                type="button"
-                disabled={removingCover}
-                onClick={() => void removeCover()}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dacs-red py-3 font-semibold text-dacs-red hover:bg-red-50 disabled:opacity-60"
-              >
-                <Trash2 size={16} />
-                {removingCover ? "Removing…" : "Remove Image"}
-              </button>
-            )}
+          <h2 className="mb-4 text-2xl font-bold">Module Cover Image</h2>
+          <div className="mb-8 rounded-dacs-card bg-white p-5 shadow-dacs-card">
+            <SeminarMediaEditor kind="image" label={`Module ${moduleNumber} cover`} currentUrl={seminarModule.coverImageUrl}
+              onSave={(file) => uploadCover(file)} onRemove={removeCover} />
+            <p className="mt-3 text-sm text-dacs-muted">Shown on this module&apos;s card on the customer seminar page. JPG, PNG, or WebP, up to 5 MB.</p>
           </div>
 
           {/* Customer-facing module description (saves when leaving the field). */}

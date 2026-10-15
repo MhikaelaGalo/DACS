@@ -1,6 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 
-import { deleteFileByUrl, saveFile } from "../../services/fileStorage.service";
+import { randomUUID } from "node:crypto";
+import { saveSeminarFile as saveFile, playableSeminarUrl, readStoredCertificate } from "../../services/seminarStorage.service";
+import { deleteUnreferencedSeminarFile as deleteFileByUrl } from "../../services/seminarFileLifecycle.service";
+import { archiveSeminarCertificate } from "../../services/seminarCertificate.service";
 import { HttpError } from "../../utils/httpError";
 import { detectImageType, detectVideoType } from "../../utils/imageType";
 import {
@@ -43,6 +46,14 @@ import {
   type UpdateQuestionInput,
   type UpdateVideoInput,
 } from "./seminar.service";
+
+async function presentVideo<T extends { videoUrl: string | null }>(video: T) {
+  return { ...video, videoUrl: await playableSeminarUrl(video.videoUrl) };
+}
+
+async function presentModule<T extends { videos: Array<{ videoUrl: string | null }> }>(module: T) {
+  return { ...module, videos: await Promise.all(module.videos.map(presentVideo)) };
+}
 
 const MODULE_FIELDS = [
   "moduleNumber",
@@ -302,11 +313,11 @@ export async function addVideo(
         );
       }
 
-      const safeName = file.originalname.replace(/[^\w.-]+/g, "_");
       savedUrl = await saveFile(
         "seminar-videos",
-        `video-${Date.now()}-${safeName}`,
-        file.buffer
+        `video-${moduleId}-${randomUUID()}.${detected.extension}`,
+        file.buffer,
+        detected.mimeType
       );
       videoUrl = savedUrl;
       fileName = file.originalname;
@@ -341,7 +352,7 @@ export async function addVideo(
       response.status(201).json({
         success: true,
         message: "Seminar video was added successfully.",
-        data: video,
+        data: await presentVideo(video),
       });
     } catch (error) {
       /* Never leave an orphaned file when the database write failed. */
@@ -390,7 +401,7 @@ export async function getModuleDetail(
 
     response.json({
       success: true,
-      data: module,
+      data: await presentModule(module),
     });
   } catch (error) {
     next(error);
@@ -471,6 +482,41 @@ export async function addQuestion(
   }
 }
 
+/** Upload to a fresh key, commit its reference, then retire the previous file. */
+export async function replaceVideoFile(request: Request, response: Response, next: NextFunction): Promise<void> {
+  let savedUrl: string | null = null;
+  try {
+    const actor = requireActor(request, response);
+    if (!actor) return;
+    const moduleId = requiredUuid(request.params.moduleId, "The module ID");
+    const videoId = requiredUuid(request.params.videoId, "The video ID");
+    const raw = (request.body ?? {}) as Record<string, unknown>;
+    rejectUnexpectedFields(raw, ["durationSeconds"]);
+    const file = request.file;
+    if (!file) throw new HttpError(400, 'A video file is required in the "video" field.');
+    const type = detectVideoType(file.buffer);
+    if (!type) throw new HttpError(400, "Only MP4 or WebM video files can be uploaded.");
+    const durationRaw = coerceNumeric(raw.durationSeconds);
+    const durationSeconds = durationRaw == null ? null : requirePositiveInteger(durationRaw, "Duration");
+    const module = await getSeminarModuleDetail(moduleId);
+    if (module.archivedAt) throw new HttpError(409, "This seminar module is archived and cannot be edited.");
+    const previous = module.videos.find((video) => video.id === videoId);
+    if (!previous) throw new HttpError(404, "Seminar video was not found.");
+    savedUrl = await saveFile("seminar-videos", `video-${moduleId}-${randomUUID()}.${type.extension}`, file.buffer, type.mimeType);
+    let updated;
+    try {
+      updated = await updateSeminarVideo(actor.id, moduleId, videoId, {
+        videoUrl: savedUrl, expectedVideoUrl: previous.videoUrl, fileName: file.originalname, durationSeconds,
+      }, { ipAddress: request.ip, userAgent: request.headers["user-agent"] });
+    } catch (error) {
+      await deleteFileByUrl(savedUrl);
+      throw error;
+    }
+    await deleteFileByUrl(previous.videoUrl);
+    response.json({ success: true, message: "Seminar video file was replaced successfully.", data: await presentVideo(updated) });
+  } catch (error) { next(error); }
+}
+
 export async function editVideo(
   request: Request,
   response: Response,
@@ -502,15 +548,18 @@ export async function editVideo(
       input.description = optionalString(raw.description, "Description", 1000);
     }
 
+    const previous = input.videoUrl === undefined ? null : (await getSeminarModuleDetail(moduleId)).videos.find((video) => video.id === videoId);
+    if (input.videoUrl !== undefined && previous) input.expectedVideoUrl = previous.videoUrl;
     const video = await updateSeminarVideo(actor.id, moduleId, videoId, input, {
       ipAddress: request.ip,
       userAgent: request.headers["user-agent"],
     });
 
+    if (previous && input.videoUrl !== previous.videoUrl) await deleteFileByUrl(previous.videoUrl);
     response.json({
       success: true,
       message: "Seminar video was updated successfully.",
-      data: video,
+      data: await presentVideo(video),
     });
   } catch (error) {
     next(error);
@@ -554,7 +603,7 @@ export async function reorderVideos(
       success: true,
       message: "Seminar videos were reordered successfully.",
       count: videos.length,
-      data: videos,
+      data: await Promise.all(videos.map(presentVideo)),
     });
   } catch (error) {
     next(error);
@@ -679,11 +728,12 @@ export async function uploadCertificateTemplate(
       return;
     }
 
-    const filename = `certificate-${moduleId}-${Date.now()}.${imageType.extension}`;
+    const filename = `certificate-${moduleId}-${randomUUID()}.${imageType.extension}`;
     const templateUrl = await saveFile(
       "certificate-templates",
       filename,
-      file.buffer
+      file.buffer,
+      imageType.mimeType
     );
 
     let result;
@@ -753,8 +803,8 @@ export async function uploadCoverImage(
       return;
     }
 
-    const filename = `cover-${moduleId}-${Date.now()}.${imageType.extension}`;
-    const coverImageUrl = await saveFile("module-covers", filename, file.buffer);
+    const filename = `cover-${moduleId}-${randomUUID()}.${imageType.extension}`;
+    const coverImageUrl = await saveFile("module-covers", filename, file.buffer, imageType.mimeType);
 
     let result;
     try {
@@ -962,7 +1012,7 @@ export async function listModules(
     response.json({
       success: true,
       count: modules.length,
-      data: modules,
+      data: await Promise.all(modules.map(presentModule)),
     });
   } catch (error) {
     next(error);
@@ -1274,12 +1324,12 @@ export const rejectCertificate = reviewHandler("REJECTED");
  * The Content-Type comes from the stored magic-byte detection, never
  * from the request, and nosniff keeps browsers honest about it.
  */
-function sendCertificateFile(
+async function sendCertificateFile(
   request: Request,
   response: Response,
   next: NextFunction,
   payload: CertificateFilePayload
-): void {
+): Promise<void> {
   const download =
     request.query.download === "1" || request.query.download === "true";
 
@@ -1287,6 +1337,17 @@ function sendCertificateFile(
   const asciiName =
     payload.fileName.replace(/[^ -~]+/g, "_").replace(/"/g, "'") ||
     "certificate";
+
+  if (payload.storageReference) {
+    const contents = await readStoredCertificate(payload.storageReference);
+    response.setHeader("Content-Type", payload.mimeType);
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(payload.fileName)}`);
+    response.send(contents);
+    return;
+  }
+  if (!payload.absolutePath) throw new HttpError(404, "This certificate has no stored file.");
 
   response.sendFile(
     payload.absolutePath,
@@ -1320,7 +1381,7 @@ export async function downloadCertificateFileStaff(
     );
 
     const payload = await getCertificateFileForStaff(requestId);
-    sendCertificateFile(request, response, next, payload);
+    await sendCertificateFile(request, response, next, payload);
   } catch (error) {
     next(error);
   }
@@ -1343,8 +1404,27 @@ export async function downloadMyCertificateFile(
     );
 
     const payload = await getMyCertificateFile(actor.id, requestId);
-    sendCertificateFile(request, response, next, payload);
+    await sendCertificateFile(request, response, next, payload);
   } catch (error) {
     next(error);
   }
+}
+
+/** Creates a permanent copy only on the account owner's explicit download action. */
+export async function archiveMyCertificate(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const actor = requireActor(request, response);
+    if (!actor) return;
+    const id = requiredUuid(request.params.requestId, "The certificate request ID");
+    response.json({ success: true, data: await archiveSeminarCertificate(id, actor.id) });
+  } catch (error) { next(error); }
+}
+
+export async function archiveCertificateStaff(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const actor = requireActor(request, response);
+    if (!actor) return;
+    const id = requiredUuid(request.params.requestId, "The certificate request ID");
+    response.json({ success: true, data: await archiveSeminarCertificate(id) });
+  } catch (error) { next(error); }
 }

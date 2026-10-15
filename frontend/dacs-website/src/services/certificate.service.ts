@@ -13,6 +13,7 @@
  *     Certificates section on /account lists.
  */
 import {
+  archiveMyCertificate,
   fetchMyCertificateFile,
   listMyCertificateRequests,
   type ApiCertificateRequest,
@@ -228,20 +229,12 @@ export async function buildCompositeCertificateBlob(
 
 /* Saves the personalized composite — the raw template still carries the
    baked placeholders, so only this rendered copy is worth downloading. */
-export async function downloadCompositeCertificate(
-  certificate: DacsCertificateView,
-  recipientName: string,
-  issuedAtLabel: string
-): Promise<void> {
-  const blob = await buildCompositeCertificateBlob(
-    certificate,
-    recipientName,
-    issuedAtLabel
-  );
-  saveBlobToDevice(
-    blob,
-    `dacs-certificate-${certificate.certificateNumber}.jpg`
-  );
+export async function downloadCompositeCertificate(certificate: DacsCertificateView, recipientName: string, issuedAtLabel: string): Promise<void> {
+  const stored = await archiveMyCertificate(certificate.id);
+  const blob = stored.stored
+    ? await fetchMyCertificateFile(certificate.id)
+    : await buildCompositeCertificateBlob(certificate, recipientName, issuedAtLabel);
+  saveBlobToDevice(blob, stored.fileName ?? `dacs-certificate-${certificate.certificateNumber}.jpg`);
 }
 
 /*
@@ -256,20 +249,14 @@ export async function downloadCertificateById(
   recipientName: string,
   formatIssuedAt: (isoDate: string) => string
 ): Promise<void> {
-  const issued = await fetchIssuedCertificateById(certificateId);
-  if (issued) {
-    await downloadIssuedCertificate(issued);
+  const stored = await archiveMyCertificate(certificateId);
+  if (!stored.stored) {
+    const approved = await fetchApprovedCertificateById(certificateId);
+    if (!approved) throw new Error("This certificate is not available for your account.");
+    const blob = await buildCompositeCertificateBlob(approved, recipientName, formatIssuedAt(approved.issuedAt));
+    saveBlobToDevice(blob, `dacs-certificate-${approved.certificateNumber}.jpg`);
     return;
   }
-
-  const approved = await fetchApprovedCertificateById(certificateId);
-  if (!approved) {
-    throw new Error("This certificate is not available for your account.");
-  }
-
-  await downloadCompositeCertificate(
-    approved,
-    recipientName,
-    formatIssuedAt(approved.issuedAt)
-  );
+  const blob = await fetchMyCertificateFile(certificateId);
+  saveBlobToDevice(blob, stored.fileName ?? `dacs-certificate-${certificateId}.jpg`);
 }

@@ -22,7 +22,7 @@ import {
   certificateValidity,
   listSeminarProgressRows,
 } from "@/lib/api/seminarProgress";
-import { fetchCertificateFileBlob } from "@/lib/api/seminars";
+import { archiveCertificate, fetchCertificateFileBlob } from "@/lib/api/seminars";
 import {
   buildCertificateBlob,
   certificateDateLabel,
@@ -140,26 +140,17 @@ export default function SeminarProgressPage() {
     try {
       if (row.hasCertificateFile) {
         const blob = await fetchCertificateFileBlob(row.certificateRequestId);
-        presentBlob(
-          blob,
-          row.certificateFileName ?? `certificate-${row.seminarId}`,
-          download
-        );
+        presentBlob(blob, row.certificateFileName ?? `certificate-${row.seminarId}`, download);
         return;
       }
-
-      /* Both come from the generated record; a row without them is not
-         a certificate this table can render. */
       if (!row.certificateIssuedAt || row.seminarId === "N/A") {
         throw new Error("This certificate is not ready yet.");
       }
-
-      const blob = await buildCertificateBlob({
-        recipientName: row.name,
-        certificateNumber: row.seminarId,
-        issuedAtLabel: certificateDateLabel(row.certificateIssuedAt),
-      });
-      presentBlob(blob, `dacs-certificate-${row.seminarId}.jpg`, download);
+      const stored = await archiveCertificate(row.certificateRequestId);
+      const blob = stored.stored
+        ? await fetchCertificateFileBlob(row.certificateRequestId)
+        : await buildCertificateBlob({ recipientName: row.name, certificateNumber: row.seminarId, issuedAtLabel: certificateDateLabel(row.certificateIssuedAt) });
+      presentBlob(blob, stored.fileName ?? `dacs-certificate-${row.seminarId}.jpg`, download);
     } catch (error) {
       showToast(
         errorMessage(error, "Unable to open the certificate."),
