@@ -3,13 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { FileText } from "lucide-react";
 import { DARK_BUTTON, OUTLINE_BUTTON } from "@/components/profile/buttons";
-import {
-  CertificationUpload,
-  formatFileSize,
-  useCertificationDocuments,
-} from "@/components/profile/CertificationUpload";
 import { FormField, ReadOnlyField } from "@/components/profile/ProfileField";
 import { ProfileAvatarColumn } from "@/components/profile/ProfileAvatarColumn";
 import { useAvatarSelection } from "@/components/profile/useAvatarSelection";
@@ -19,7 +13,6 @@ import {
   personalInfoSchema,
   type PersonalInfoFormValues,
 } from "@/lib/validation/account";
-import { formatDate } from "@/lib/utils/format";
 import { errorMessage } from "@/lib/api";
 import {
   createMyProfile,
@@ -28,20 +21,9 @@ import {
   type ProfileFields,
 } from "@/lib/api/account";
 import { splitFullName } from "@/services/auth.service";
-import {
-  getCertificationDocuments,
-  saveCertificationDocuments,
-  type CertificationDocumentMeta,
-} from "@/services/user.service";
 import type { User } from "@/types/user";
 
 // Figma: User Info 203:55 (view) and User Info (Edit) 256:6370.
-/** "application/pdf" -> "PDF", "image/jpeg" -> "JPEG". */
-function docTypeLabel(mimeType: string): string {
-  const subtype = mimeType.split("/")[1] ?? mimeType;
-  return subtype.toUpperCase();
-}
-
 function toFormValues(user: User): PersonalInfoFormValues {
   return {
     fullName: user.fullName,
@@ -102,9 +84,6 @@ export default function PersonalInfoPage() {
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
-  const [savedCertDocs, setSavedCertDocs] = useState<
-    CertificationDocumentMeta[]
-  >([]);
   const {
     preview: avatarPreview,
     file: avatarFile,
@@ -114,7 +93,6 @@ export default function PersonalInfoPage() {
     clearSelection,
     handleFile,
   } = useAvatarSelection();
-  const certDocs = useCertificationDocuments(savedCertDocs);
 
   const {
     register,
@@ -132,17 +110,6 @@ export default function PersonalInfoPage() {
       completeAddress: "",
     },
   });
-
-  useEffect(() => {
-    /* Personal Info renders from the account profile alone — DACS
-       seminar certificates live in the Seminar / Modules Taken flow, so
-       this page issues no certificate request at all. */
-    const storedDocs = getCertificationDocuments();
-    setSavedCertDocs(storedDocs);
-    certDocs.reset(storedDocs);
-    // certDocs.reset is stable for the lifetime of the page.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (user) reset(toFormValues(user));
@@ -173,13 +140,11 @@ export default function PersonalInfoPage() {
 
   if (!user) return null;
 
-  const hasUnsavedChanges =
-    isDirty || avatarPreview !== null || certDocs.dirty;
+  const hasUnsavedChanges = isDirty || avatarPreview !== null;
 
   function startEditing() {
     if (user) reset(toFormValues(user));
     clearSelection();
-    certDocs.reset(savedCertDocs);
     setSaved(false);
     setEditing(true);
   }
@@ -187,7 +152,6 @@ export default function PersonalInfoPage() {
   function exitEditing() {
     if (user) reset(toFormValues(user));
     clearSelection();
-    certDocs.reset(savedCertDocs);
     setEditing(false);
   }
 
@@ -232,11 +196,6 @@ export default function PersonalInfoPage() {
       if (avatarFile) {
         await uploadProfileImage(avatarFile);
       }
-      // Certification documents from other organizations stay on this
-      // device for now — the backend has no document storage for them yet.
-      const documents = certDocs.toMetadata();
-      saveCertificationDocuments(documents);
-      setSavedCertDocs(documents);
       await refreshUser();
       clearSelection();
       setEditing(false);
@@ -253,10 +212,9 @@ export default function PersonalInfoPage() {
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      // Bottom padding keeps the last certificate card clear of the footer
-      // regardless of how many certificates render: the (portal) layout
-      // already adds 60px below lg, topped up to >=64px from md; at lg the
-      // layout adds none, so the page carries the full 80px itself.
+      // Bottom padding keeps the profile clear of the footer: the (portal)
+      // layout already adds 60px below lg, topped up to >=64px from md;
+      // at lg the page carries the full 80px itself.
       className="md:pb-[16px] lg:flex lg:min-h-[907px] lg:items-start lg:pb-[80px]"
     >
       <input
@@ -399,61 +357,6 @@ export default function PersonalInfoPage() {
           )}
         </div>
 
-        {editing ? (
-          <>
-            <p className="mt-[20px] text-[18px] leading-normal text-black">
-              Certifications (from other organizations)
-            </p>
-            {/* TODO: Connect Alibaba Cloud file storage for certification
-                uploads. Uploads here are EXTERNAL documents only — they never
-                create DACS certificates or touch seminar progress. */}
-            <CertificationUpload
-              docs={certDocs.docs}
-              errors={certDocs.errors}
-              onAddFiles={certDocs.addFiles}
-              onRemove={certDocs.remove}
-            />
-          </>
-        ) : (
-          <>
-            {/* Documents the farmer uploaded from outside organizations —
-                never mixed with (or labeled as) DACS certificates. */}
-            <p className="mt-[20px] text-[18px] leading-normal text-black">
-              Certificates from Other Organizations
-            </p>
-            <div className="mt-[30px] flex max-w-[849px] flex-col gap-[20px]">
-              {savedCertDocs.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="flex h-[65px] items-center gap-[14px] rounded-[15px] bg-white pl-[24px] pr-[24px] shadow-[0px_0px_8px_0px_rgba(0,0,0,0.15)] lg:pl-[38px] lg:pr-[26px]"
-                >
-                  <FileText
-                    size={24}
-                    aria-hidden
-                    className="shrink-0 text-[#7d7d7d]"
-                  />
-                  <p className="truncate text-[18px] font-bold leading-normal text-black">
-                    {doc.name}
-                  </p>
-                  <p className="ml-auto shrink-0 text-[15px] leading-normal text-[#7d7d7d]">
-                    {docTypeLabel(doc.type)} · {formatDate(doc.uploadedAt)} ·{" "}
-                    {formatFileSize(doc.size)}
-                  </p>
-                </div>
-              ))}
-              {savedCertDocs.length === 0 && (
-                <div className="rounded-[15px] bg-white px-[24px] py-[20px] shadow-[0px_0px_8px_0px_rgba(0,0,0,0.15)] lg:px-[38px]">
-                  <p className="text-[18px] font-bold leading-normal text-black">
-                    No external certificates uploaded
-                  </p>
-                  <p className="mt-[4px] text-[15px] leading-normal text-[#7d7d7d]">
-                    Documents you upload under Edit Info appear here.
-                  </p>
-                </div>
-              )}
-            </div>
-          </>
-        )}
       </section>
 
       <LeaveFormDialog

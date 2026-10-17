@@ -263,9 +263,24 @@ export async function fetchCertificateFileBlob(
   return apiFetchBlob(`/api/seminars/certificates/${requestId}/file`);
 }
 
-export async function archiveCertificate(requestId: string): Promise<{ stored: boolean; fileName: string | null }> {
-  const response = await api.post<{ data: { stored: boolean; fileName: string | null } }>(
+export async function archiveCertificate(requestId: string): Promise<{ stored: boolean; fileName: string | null; recipientName: string }> {
+  const response = await api.post<{ data: { stored: boolean; fileName: string | null; recipientName: string } }>(
     `/api/seminars/certificates/${requestId}/archive`
+  );
+  return response.data;
+}
+
+export interface CertificateNameResult {
+  id: string;
+  recipientName: string;
+  stored: boolean;
+  fileName: string | null;
+}
+
+export async function correctCertificateName(requestId: string, recipientName: string, expectedRecipientName: string): Promise<CertificateNameResult> {
+  const response = await api.patch<{ data: CertificateNameResult }>(
+    `/api/seminars/certificates/${requestId}/name`,
+    { recipientName, expectedRecipientName }
   );
   return response.data;
 }

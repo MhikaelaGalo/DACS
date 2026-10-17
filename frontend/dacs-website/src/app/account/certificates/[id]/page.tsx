@@ -13,9 +13,8 @@ import {
   certificateValidityLabel,
   downloadCompositeCertificate,
   downloadIssuedCertificate,
-  fetchApprovedCertificateById,
+  fetchCertificateForDisplay,
   fetchIssuedCertificateBlob,
-  fetchIssuedCertificateById,
 } from "@/services/certificate.service";
 import type {
   DacsCertificateView,
@@ -55,30 +54,47 @@ export default function CertificatePage({
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let inFlight = false;
+    let lastSignature = "";
+    async function loadCertificate() {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        // The real issued file wins over the composite fallback.
-        const issuedCertificate = await fetchIssuedCertificateById(id);
+        const current = await fetchCertificateForDisplay(id);
+        const signature = JSON.stringify(current);
+        if (cancelled || signature === lastSignature) return;
+        const issuedCertificate = current.issued;
         if (issuedCertificate) {
           const blob = await fetchIssuedCertificateBlob(issuedCertificate);
           if (cancelled) return;
           setIssued(issuedCertificate);
+          setEarned(null);
           setIssuedFileType(blob.type);
           setIssuedFileUrl(URL.createObjectURL(blob));
-          setLoaded(true);
-          return;
+        } else {
+          setIssued(null);
+          setIssuedFileUrl(null);
+          setEarned(current.approved);
         }
-        const approved = await fetchApprovedCertificateById(id);
-        if (cancelled) return;
-        setEarned(approved ?? null);
+        lastSignature = signature;
         setLoaded(true);
       } catch {
         if (cancelled) return;
         setLoaded(true);
+      } finally {
+        inFlight = false;
       }
-    })();
+    }
+    const refreshWhenVisible = () => { if (!document.hidden) void loadCertificate(); };
+    void loadCertificate();
+    const timer = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [id]);
 
@@ -208,7 +224,7 @@ export default function CertificatePage({
   // ---- Approved but not yet issued: legacy composite view -----------------
   if (!earned) return null;
 
-  const recipientName = user?.fullName ?? "—";
+  const recipientName = earned.recipientName ?? user?.fullName ?? "—";
   const imageUrl = CERTIFICATE_TEMPLATE_URL;
   const title = earned.title;
   const earnedCertificate: DacsCertificateView = earned;

@@ -22,6 +22,7 @@ import {
   downloadCertificateFileStaff,
   downloadMyCertificateFile,
   editModule,
+  editCertificateName,
   editQuestion,
   editVideo,
   getModuleDetail,
@@ -310,6 +311,15 @@ seminarRouter.post(
   authorizeRoles("OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"),
   uploadLimiter,
   archiveCertificateStaff
+);
+
+seminarRouter.patch(
+  "/certificates/:requestId/name",
+  authenticateFirebase,
+  loadDacsUser,
+  authorizeRoles("OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"),
+  uploadLimiter,
+  editCertificateName
 );
 
 seminarRouter.get(

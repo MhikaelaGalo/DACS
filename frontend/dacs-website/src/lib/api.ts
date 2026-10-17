@@ -184,6 +184,7 @@ export async function apiFetchBlob(path: string): Promise<Blob> {
   try {
     response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
     });
   } catch {
     throw new ApiError(

@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { saveSeminarFile as saveFile, playableSeminarUrl, readStoredCertificate } from "../../services/seminarStorage.service";
 import { deleteUnreferencedSeminarFile as deleteFileByUrl } from "../../services/seminarFileLifecycle.service";
-import { archiveSeminarCertificate } from "../../services/seminarCertificate.service";
+import { archiveSeminarCertificate, correctSeminarCertificateName } from "../../services/seminarCertificate.service";
 import { HttpError } from "../../utils/httpError";
 import { detectImageType, detectVideoType } from "../../utils/imageType";
 import {
@@ -1426,5 +1426,20 @@ export async function archiveCertificateStaff(request: Request, response: Respon
     if (!actor) return;
     const id = requiredUuid(request.params.requestId, "The certificate request ID");
     response.json({ success: true, data: await archiveSeminarCertificate(id) });
+  } catch (error) { next(error); }
+}
+
+export async function editCertificateName(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const actor = requireActor(request, response);
+    if (!actor) return;
+    const id = requiredUuid(request.params.requestId, "The certificate request ID");
+    const raw = (request.body ?? {}) as Record<string, unknown>;
+    rejectUnexpectedFields(raw, ["recipientName", "expectedRecipientName"]);
+    const data = await correctSeminarCertificateName(actor.id, id, {
+      recipientName: requiredString(raw.recipientName, "Certificate name", 200),
+      expectedRecipientName: requiredString(raw.expectedRecipientName, "Current certificate name", 200),
+    }, { ipAddress: request.ip, userAgent: request.headers["user-agent"] });
+    response.json({ success: true, message: "Certificate name was updated successfully.", data });
   } catch (error) { next(error); }
 }

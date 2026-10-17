@@ -38,6 +38,7 @@ export async function fetchApprovedCertificates(): Promise<
       id: request.id,
       title: CERTIFICATE_TITLE,
       certificateNumber: request.certificateNumber as string,
+      recipientName: request.recipientName,
       issuedAt: request.certificateIssuedAt ?? request.requestedAt,
     }));
 }
@@ -56,6 +57,7 @@ function toIssuedView(
     id: request.id,
     title: CERTIFICATE_TITLE,
     certificateNumber: request.certificateNumber ?? "",
+    recipientName: request.recipientName,
     issuedAt: request.issuedAt as string,
     validUntil: request.validUntil as string,
     fileName: request.certificateFileName,
@@ -88,6 +90,17 @@ export async function fetchIssuedCertificateById(
 ): Promise<IssuedDacsCertificateView | undefined> {
   const certificates = await fetchIssuedCertificates();
   return certificates.find((certificate) => certificate.id === id);
+}
+
+/** One metadata read for the viewer; image bytes are fetched only when it changes. */
+export async function fetchCertificateForDisplay(id: string): Promise<{ issued: IssuedDacsCertificateView | null; approved: DacsCertificateView | null }> {
+  const request = (await listMyCertificateRequests()).find((entry) => entry.id === id && entry.status === "APPROVED" && entry.certificateNumber);
+  if (!request) return { issued: null, approved: null };
+  const approved: DacsCertificateView = {
+    id: request.id, title: CERTIFICATE_TITLE, certificateNumber: request.certificateNumber!,
+    recipientName: request.recipientName, issuedAt: request.certificateIssuedAt ?? request.requestedAt,
+  };
+  return { approved, issued: request.issuedAt && request.validUntil && request.hasCertificateFile ? toIssuedView(request) : null };
 }
 
 /*
@@ -233,7 +246,7 @@ export async function downloadCompositeCertificate(certificate: DacsCertificateV
   const stored = await archiveMyCertificate(certificate.id);
   const blob = stored.stored
     ? await fetchMyCertificateFile(certificate.id)
-    : await buildCompositeCertificateBlob(certificate, recipientName, issuedAtLabel);
+    : await buildCompositeCertificateBlob(certificate, stored.recipientName ?? certificate.recipientName ?? recipientName, issuedAtLabel);
   saveBlobToDevice(blob, stored.fileName ?? `dacs-certificate-${certificate.certificateNumber}.jpg`);
 }
 
@@ -253,7 +266,7 @@ export async function downloadCertificateById(
   if (!stored.stored) {
     const approved = await fetchApprovedCertificateById(certificateId);
     if (!approved) throw new Error("This certificate is not available for your account.");
-    const blob = await buildCompositeCertificateBlob(approved, recipientName, formatIssuedAt(approved.issuedAt));
+    const blob = await buildCompositeCertificateBlob(approved, stored.recipientName ?? approved.recipientName ?? recipientName, formatIssuedAt(approved.issuedAt));
     saveBlobToDevice(blob, `dacs-certificate-${approved.certificateNumber}.jpg`);
     return;
   }

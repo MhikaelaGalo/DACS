@@ -16,6 +16,7 @@ interface ApiSeminarProgressEntry {
   firstName: string;
   middleName: string | null;
   lastName: string;
+  suffix: string | null;
   occupation: string | null;
   phoneNumber: string | null;
   contactEmail: string | null;
@@ -33,6 +34,7 @@ interface ApiSeminarProgressEntry {
     id: string;
     status: string;
     certificateNumber: string | null;
+    recipientName: string | null;
     certificateIssuedAt: string | null;
     certificateFileName: string | null;
     certificateFileMimeType: string | null;
@@ -96,6 +98,7 @@ function toProgressRow(entry: ApiSeminarProgressEntry): SeminarProgressRow {
     registrationDate: registration ? registration.slice(0, 10) : "",
     payDate: "",
     certificateRequestId: certificate?.id ?? null,
+    certificateRecipientName: certificate?.recipientName ?? [entry.firstName, entry.middleName, entry.lastName, entry.suffix].filter(Boolean).join(" "),
     hasCertificateFile: certificate?.certificateFileName != null,
     certificateFileName: certificate?.certificateFileName ?? null,
     certificateIssuedAt: certificate?.issuedAt ?? null,

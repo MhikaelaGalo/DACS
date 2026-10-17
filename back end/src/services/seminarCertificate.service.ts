@@ -4,6 +4,26 @@ import { prisma } from "../config/database";
 import { HttpError } from "../utils/httpError";
 import { saveSeminarCertificate, usesNeonSeminarStorage } from "./seminarStorage.service";
 import { deleteUnreferencedSeminarFile } from "./seminarFileLifecycle.service";
+import { recordActivity } from "./activityLog.service";
+import type { RequestMeta } from "../modules/auth/auth.service";
+
+type CertificateNameSource = {
+  recipientName: string | null;
+  customerProfile: { firstName: string; middleName: string | null; lastName: string; suffix: string | null };
+};
+
+function recipientNameFor(record: CertificateNameSource): string {
+  const profile = record.customerProfile;
+  return record.recipientName ?? [profile.firstName, profile.middleName, profile.lastName, profile.suffix].filter(Boolean).join(" ");
+}
+
+function normalizeRecipientName(value: string): string {
+  const normalized = value.trim().replace(/\s+/gu, " ");
+  if (!normalized || normalized.length > 200 || /[\p{Cc}\p{Cf}]/u.test(normalized)) {
+    throw new HttpError(400, "Enter a certificate name between 1 and 200 characters.", "recipientName");
+  }
+  return normalized;
+}
 
 function xml(value: string): string {
   return value.replace(/[<>&"']/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[character]!);
@@ -38,25 +58,96 @@ export async function archiveSeminarCertificate(requestId: string, farmerUserId?
   if (record.status !== "APPROVED" || !record.certificateNumber || !record.certificateIssuedAt) {
     throw new HttpError(409, "This certificate has not been approved yet.");
   }
-  if (record.certificateFilePath) return { stored: true, fileName: record.certificateFileName, mimeType: record.certificateFileMimeType };
+  const name = recipientNameFor(record);
+  if (record.certificateFilePath) return { stored: true, fileName: record.certificateFileName, mimeType: record.certificateFileMimeType, recipientName: name };
   // Until cloud storage is explicitly enabled, preserve browser generation.
   // Never add a new local-disk certificate reference to the shared database.
-  if (!usesNeonSeminarStorage()) return { stored: false, fileName: null, mimeType: null };
-  const profile = record.customerProfile;
-  const name = [profile.firstName, profile.middleName, profile.lastName, profile.suffix].filter(Boolean).join(" ");
+  if (!usesNeonSeminarStorage()) return { stored: false, fileName: null, mimeType: null, recipientName: name };
   const contents = await renderSeminarCertificate({ name, number: record.certificateNumber, date: record.issuedAt ?? record.certificateIssuedAt });
   const fileName = `dacs-certificate-${record.certificateNumber}.jpg`;
   const reference = await saveSeminarCertificate(fileName, contents);
   try {
     // Concurrent downloads keep the first completed archive. No dates/statuses change.
     const saved = await prisma.certificateRequest.updateMany({
-      where: { id: record.id, certificateFilePath: null, status: "APPROVED" },
+      where: { id: record.id, certificateFilePath: null, recipientName: record.recipientName, status: "APPROVED" },
       data: { certificateFilePath: reference, certificateFileName: fileName, certificateFileMimeType: "image/jpeg", certificateFileSize: contents.length },
     });
-    if (saved.count === 0) await deleteUnreferencedSeminarFile(reference);
+    if (saved.count === 0) {
+      await deleteUnreferencedSeminarFile(reference);
+      const current = await prisma.certificateRequest.findUniqueOrThrow({ where: { id: record.id }, include: { customerProfile: true } });
+      if (!current.certificateFilePath) throw new HttpError(409, "The certificate changed. Please try downloading it again.");
+      return { stored: true, fileName: current.certificateFileName, mimeType: current.certificateFileMimeType, recipientName: recipientNameFor(current) };
+    }
   } catch (error) {
     await deleteUnreferencedSeminarFile(reference);
     throw error;
   }
-  return { stored: true, fileName, mimeType: "image/jpeg" };
+  return { stored: true, fileName, mimeType: "image/jpeg", recipientName: name };
+}
+
+/** Replace the certificate artifact without changing its identity or earned dates. */
+export async function correctSeminarCertificateName(
+  actorUserId: string,
+  requestId: string,
+  input: { recipientName: string; expectedRecipientName: string },
+  meta: RequestMeta
+) {
+  const actor = await prisma.user.findFirst({
+    where: { id: actorUserId, role: { in: ["OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"] }, status: "ACTIVE" },
+    select: { id: true },
+  });
+  if (!actor) throw new HttpError(403, "You do not have permission to correct certificate names.");
+  const name = normalizeRecipientName(input.recipientName);
+  const expected = normalizeRecipientName(input.expectedRecipientName);
+  const record = await prisma.certificateRequest.findUnique({
+    where: { id: requestId },
+    include: { customerProfile: { select: { firstName: true, middleName: true, lastName: true, suffix: true } } },
+  });
+  if (!record) throw new HttpError(404, "Certificate was not found.");
+  if (record.status !== "APPROVED" || !record.certificateNumber || !record.certificateIssuedAt) {
+    throw new HttpError(409, "Only an approved certificate can have its name corrected.");
+  }
+  const previousName = recipientNameFor(record);
+  if (normalizeRecipientName(previousName) !== expected) {
+    throw new HttpError(409, "The certificate name changed. Close this editor and reopen it to load the current name.");
+  }
+  if (name === previousName) {
+    return { id: record.id, recipientName: previousName, stored: Boolean(record.certificateFilePath), fileName: record.certificateFileName };
+  }
+  const cloud = usesNeonSeminarStorage();
+  if (!cloud && record.certificateFilePath) {
+    throw new HttpError(503, "Enable Neon storage on this backend before replacing a stored certificate.");
+  }
+  let reference: string | null = null;
+  const fileName = `dacs-certificate-${record.certificateNumber}.jpg`;
+  let fileSize = 0;
+  if (cloud) {
+    const contents = await renderSeminarCertificate({ name, number: record.certificateNumber, date: record.issuedAt ?? record.certificateIssuedAt });
+    reference = await saveSeminarCertificate(fileName, contents);
+    fileSize = contents.length;
+  }
+  try {
+    await prisma.$transaction(async (transaction) => {
+      const updated = await transaction.certificateRequest.updateMany({
+        where: { id: record.id, status: "APPROVED", recipientName: record.recipientName, certificateFilePath: record.certificateFilePath },
+        data: {
+          recipientName: name,
+          ...(reference ? { certificateFilePath: reference, certificateFileName: fileName, certificateFileMimeType: "image/jpeg", certificateFileSize: fileSize } : {}),
+        },
+      });
+      if (updated.count !== 1) throw new HttpError(409, "The certificate changed while saving. Close this editor and try again.");
+      await recordActivity(transaction, {
+        userId: actorUserId, module: "SEMINARS", action: "CERTIFICATE_NAME_CORRECTED",
+        description: `The recipient name on certificate ${record.certificateNumber} was corrected.`,
+        recordType: "CertificateRequest", recordId: record.id,
+        metadata: { previousName, recipientName: name, certificateNumber: record.certificateNumber },
+        ipAddress: meta.ipAddress, userAgent: meta.userAgent,
+      });
+    });
+  } catch (error) {
+    if (reference) await deleteUnreferencedSeminarFile(reference);
+    throw error;
+  }
+  if (record.certificateFilePath && reference) await deleteUnreferencedSeminarFile(record.certificateFilePath);
+  return { id: record.id, recipientName: name, stored: Boolean(reference), fileName: reference ? fileName : null };
 }

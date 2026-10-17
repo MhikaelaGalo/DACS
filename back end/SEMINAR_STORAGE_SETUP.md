@@ -131,6 +131,40 @@ held aside because an upload might still be in progress. Certificates are exclud
 from orphan deletion/review in this tool. The command never deletes any object;
 review the report and recheck references before any manual deletion.
 
+## 8. Certificate name corrections
+
+The Seminar Progress blue pencil edits only the certificate recipient name.
+The database needs the additive migration
+`20261016060000_certificate_recipient_name` before deploying this version.
+Apply the prepared Prisma migration through the existing production migration
+workflow, then deploy the backend and both frontends. The migration adds one
+nullable column and leaves existing certificate names, numbers, dates, and files
+unchanged. Do not use `prisma migrate reset` or `prisma db push` on the shared database.
+This migration has not been applied to the shared Neon database by the assistant.
+
+From the backend directory, with the intended shared Neon `DATABASE_URL` configured:
+
+```powershell
+npx prisma migrate deploy
+```
+
+Run the migration before pushing this code to an automatically deployed branch.
+The read-only check during implementation found all 26 previous migrations
+recorded, with only this new migration pending. Keep
+`SEMINAR_STORAGE_DRIVER=neon` on any backend used to correct stored certificates.
+
+In Neon mode, Save Changes generates a new private JPEG, switches the certificate
+name and file reference together, then cleans up the unreferenced previous file.
+An activity log records the staff correction. Failed uploads/saves keep the last
+committed certificate; concurrent edits return a conflict rather than overwriting
+the winning change. The customer's profile and seminar progress are not renamed.
+
+The farmer certificate viewer and completion page refresh metadata every 30
+seconds while visible, and when the tab regains focus. The viewer downloads the
+image again only when certificate metadata changes. Future views, prints, and
+downloads use the correction; files already downloaded to a device retain their
+previous contents.
+
 ## Validation performed for the code
 
 `npm run test:seminar-media` uses the dedicated local `.env.test` database and

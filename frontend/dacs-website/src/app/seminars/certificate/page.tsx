@@ -84,6 +84,19 @@ export default function ModuleSeminarCertificationPage() {
   }, []);
 
   useEffect(() => {
+    if (!allComplete) return;
+    const refreshWhenVisible = () => { if (!document.hidden) void loadCertificateStatus(); };
+    const timer = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [allComplete, loadCertificateStatus]);
+
+  useEffect(() => {
     setFromModules(
       new URLSearchParams(window.location.search).get("from") === "modules"
     );
@@ -168,6 +181,7 @@ export default function ModuleSeminarCertificationPage() {
               status: earned.status,
               requestedAt: earned.approvedAt ?? "",
               certificateNumber: earned.certificateNumber,
+              recipientName: earned.recipientName,
               certificateIssuedAt: earned.approvedAt,
               reviewNotes: null,
               hasCertificateFile: earned.hasCertificateFile,
@@ -240,7 +254,7 @@ export default function ModuleSeminarCertificationPage() {
 
   if (!seminar) return null;
 
-  const certificateName = user?.fullName ?? "—";
+  const certificateName = certificate?.recipientName ?? user?.fullName ?? "—";
   const resultForThisModule =
     freshResult && freshResult.seminarId === seminar.id ? freshResult : null;
   const completedDate = resultForThisModule

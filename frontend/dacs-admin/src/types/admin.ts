@@ -178,6 +178,7 @@ export interface SeminarProgressRow extends CustomerColumns {
    * workflow.
    */
   certificateRequestId: string | null;
+  certificateRecipientName: string;
   hasCertificateFile: boolean;
   certificateFileName: string | null;
   certificateIssuedAt: string | null;

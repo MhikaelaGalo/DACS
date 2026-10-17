@@ -157,9 +157,11 @@ export function SeminarCard({
           {/* Module price: "Free" for free modules, the peso price for paid
               ones, and a green Purchased tag once the payment is verified. */}
           {purchased ? (
-            <span className="ml-auto rounded-[8px] bg-[#dbfae6] px-[12px] py-[3px] text-[15px] font-semibold leading-normal text-[#116530]">
-              Purchased
-            </span>
+            <div className="ml-auto flex shrink-0 justify-center lg:-mr-[66px] lg:w-[134px]">
+              <span className="rounded-[8px] bg-[#dbfae6] px-[12px] py-[3px] text-[15px] font-semibold leading-normal text-[#116530]">
+                Purchased
+              </span>
+            </div>
           ) : (
             <span
               className={`ml-auto text-[18px] font-semibold leading-normal ${

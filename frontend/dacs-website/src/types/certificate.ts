@@ -11,6 +11,7 @@ export interface DacsCertificateView {
   title: string;
   /** SEM-YYYY-NNNNNN, assigned by DACS staff on approval. */
   certificateNumber: string;
+  recipientName: string | null;
   issuedAt: string;
 }
 
@@ -27,6 +28,7 @@ export interface IssuedDacsCertificateView {
   id: string;
   title: string;
   certificateNumber: string;
+  recipientName: string | null;
   /** Official issuance date — the start of the 2-year validity window. */
   issuedAt: string;
   validUntil: string;

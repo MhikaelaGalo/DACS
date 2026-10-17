@@ -299,6 +299,7 @@ export interface SeminarCompletionCertificate {
   id: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   certificateNumber: string | null;
+  recipientName: string | null;
   /** Approval / auto-issue moment — the SEM number's own date. */
   approvedAt: Date | null;
   /** Official staff issuance (starts the stored 2-year window). */
@@ -353,6 +354,7 @@ export async function getSeminarCompletionState(
         status: true,
         certificateNumber: true,
         requestedAt: true,
+        recipientName: true,
         reviewedAt: true,
         certificateIssuedAt: true,
         issuedAt: true,
@@ -374,6 +376,7 @@ export async function getSeminarCompletionState(
         id: row.id,
         status: row.status,
         certificateNumber: row.certificateNumber,
+        recipientName: row.recipientName,
         approvedAt: row.certificateIssuedAt ?? row.reviewedAt,
         issuedAt: row.issuedAt,
         validUntil: row.validUntil,
@@ -1811,6 +1814,7 @@ export async function getSeminarProgressOverview() {
       firstName: true,
       middleName: true,
       lastName: true,
+      suffix: true,
       occupation: true,
       phoneNumber: true,
       contactEmail: true,
@@ -1842,6 +1846,7 @@ export async function getSeminarProgressOverview() {
           id: true,
           status: true,
           certificateNumber: true,
+          recipientName: true,
           certificateIssuedAt: true,
           certificateFileName: true,
           certificateFileMimeType: true,

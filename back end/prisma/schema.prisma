@@ -744,6 +744,8 @@ model CertificateRequest {
   // Filled only after approval.
   certificateNumber   String?   @unique @map("certificate_number")
   certificateIssuedAt DateTime? @map("certificate_issued_at")
+  // Staff correction for this certificate only; the customer profile stays intact.
+  recipientName       String?   @map("recipient_name")
 
   /*
    * Physical certificate issued by Dominant Asia Poultry Genetics.

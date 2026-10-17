@@ -94,6 +94,7 @@ export interface ApiSeminarCompletionCertificate {
   id: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   certificateNumber: string | null;
+  recipientName: string | null;
   approvedAt: string | null;
   issuedAt: string | null;
   validUntil: string | null;
@@ -162,6 +163,7 @@ export interface ApiCertificateRequest {
   status: "PENDING" | "APPROVED" | "REJECTED";
   requestedAt: string;
   certificateNumber: string | null;
+  recipientName: string | null;
   /* Approval timestamp (SEM number assignment) — NOT the official
      issuance below; the old composite certificate page shows it. */
   certificateIssuedAt: string | null;
@@ -188,8 +190,8 @@ export async function listSeminarModules(): Promise<ApiSeminarModule[]> {
   return response.data;
 }
 
-export async function archiveMyCertificate(requestId: string): Promise<{ stored: boolean; fileName: string | null; mimeType: string | null }> {
-  const response = await api.post<{ data: { stored: boolean; fileName: string | null; mimeType: string | null } }>(
+export async function archiveMyCertificate(requestId: string): Promise<{ stored: boolean; fileName: string | null; mimeType: string | null; recipientName: string }> {
+  const response = await api.post<{ data: { stored: boolean; fileName: string | null; mimeType: string | null; recipientName: string } }>(
     `/api/seminars/certificates/me/${requestId}/archive`
   );
   return response.data;
