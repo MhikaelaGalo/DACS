@@ -21,6 +21,7 @@
  * Run: npx tsx scripts/test-certificate-issuance.ts
  */
 import { assertTestServer } from "./lib/test-env";
+import { seminarRegistrationBody } from "./lib/seminar-registration";
 
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -266,11 +267,12 @@ async function ensureRequiredModule(moduleNumber: number) {
 
 /* Complete one module through the real farmer API path. */
 async function completeModule(token: string, moduleId: string): Promise<boolean> {
-  const started = await api(`/api/seminars/modules/${moduleId}/start`, {
+  const registration = await api("/api/seminars/registrations", {
     method: "POST",
     token,
+    body: seminarRegistrationBody(moduleId),
   });
-  if (started.status >= 400) return false;
+  if (registration.status >= 400) return false;
 
   const videos = await prisma.seminarVideo.findMany({
     where: { moduleId, archivedAt: null },

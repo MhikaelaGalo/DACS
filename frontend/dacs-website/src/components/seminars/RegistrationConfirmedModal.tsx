@@ -6,10 +6,12 @@
 
 interface RegistrationConfirmedModalProps {
   onClose: () => void;
+  continueToModule: boolean;
 }
 
 export function RegistrationConfirmedModal({
   onClose,
+  continueToModule,
 }: RegistrationConfirmedModalProps) {
   return (
     <div
@@ -42,9 +44,15 @@ export function RegistrationConfirmedModal({
             Registration Confirmed!
           </p>
           <p className="mt-[32px] max-w-[599px] text-center text-[16px] leading-normal text-black lg:text-[18px]">
-            You are now enrolled in the selected module(s). You can
-            start watching the seminar videos anytime from the seminar page.
+            Your registration is confirmed for the seminar modules you selected.
           </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-7 cursor-pointer rounded-[11px] bg-[#181818] px-7 py-3 font-bold text-white"
+          >
+            {continueToModule ? "Continue to seminar" : "Back to seminars"}
+          </button>
         </div>
       </div>
     </div>

@@ -34,6 +34,7 @@ import {
   listCertificateRequests,
   listModules,
   listMyCertificates,
+  registerModules,
   rejectCertificate,
   reorderVideos,
   requestCertificate,
@@ -216,6 +217,15 @@ seminarRouter.delete(
  * Farmer learning path. Writes require a verified email, like every
  * other farmer write in DACS.
  */
+seminarRouter.post(
+  "/registrations",
+  authenticateFirebase,
+  requireVerifiedEmail,
+  loadDacsUser,
+  authorizeRoles("CLIENT_FARMER"),
+  registerModules
+);
+
 seminarRouter.post(
   "/modules/:moduleId/start",
   authenticateFirebase,

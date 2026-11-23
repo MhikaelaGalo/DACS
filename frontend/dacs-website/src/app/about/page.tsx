@@ -187,15 +187,13 @@ export default async function AboutPage() {
           </div>
           {/* Co-Owner */}
           <div className="flex flex-col items-center gap-[11px] lg:flex-row lg:items-stretch">
-            {/* Co-owner photo — temporarily reuses Dr. Erwin Joseph Cruz's
-                portrait (per client) until Cristina Cruz's own photo is
-                provided. */}
             <div className="relative order-last my-[40px] h-[237px] w-full max-w-[279px] shrink-0 overflow-hidden rounded-[15px] shadow-[0px_0px_15px_0px_rgba(0,0,0,0.15)] lg:order-none lg:my-0 lg:h-auto lg:min-h-[237px] lg:w-[279px] lg:self-stretch">
               <Image
-                src="/images/dr-erwin-joseph-cruz.jpg"
-                alt="Co-owner portrait"
+                src="/images/cristina-cruz.png"
+                alt="Cristina Cruz"
                 fill
-                className="rounded-[15px] object-cover"
+                sizes="279px"
+                className="rounded-[15px] object-cover object-[center_20%]"
               />
             </div>
             <div className="w-full rounded-[15px] bg-white p-[24px] shadow-[0px_0px_15px_0px_rgba(0,0,0,0.15)] lg:flex-1 lg:pb-[49px] lg:pl-[97px] lg:pr-[96px] lg:pt-[35px]">

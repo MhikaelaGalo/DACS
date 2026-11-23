@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import { ApiError, errorMessage } from "@/lib/api";
-import { runAnalyticsQuery } from "@/lib/api/analytics";
+import { getSavedVisualData, runAnalyticsQuery } from "@/lib/api/analytics";
 import { formatCount, formatEnumLabel, formatPeso } from "@/lib/format";
 import type {
   AnalyticsMeasureFormat,
@@ -59,7 +59,7 @@ type CustomDataState =
   /* The visual predates the backend-driven builder (sample-data era). */
   | { status: "obsolete" }
   | { status: "error"; message: string }
-  | { status: "ready"; result: AnalyticsQueryResult };
+  | { status: "ready"; result: AnalyticsQueryResult; dataKey: string };
 
 /*
  * Fetches the visual's real aggregated series. The dependencies are the
@@ -102,9 +102,19 @@ function useCustomVisualData(
       current.status === "ready" ? current : { status: "loading" }
     );
     const timer = setTimeout(() => {
-      runAnalyticsQuery({ dataset, xField, xBucket, yField, aggregation, legendField })
+      const series = visual.id === "preview"
+        ? runAnalyticsQuery({ dataset, xField, xBucket, yField, aggregation, legendField })
+        : getSavedVisualData(visual.id);
+      series
         .then((result) => {
-          if (!cancelled) setState({ status: "ready", result });
+          if (cancelled) return;
+          // Every poll has a new timestamp, even when all chart values and labels match.
+          const dataKey = JSON.stringify({ ...result, generatedAt: undefined });
+          setState((current) =>
+            current.status === "ready" && current.dataKey === dataKey
+              ? current
+              : { status: "ready", result, dataKey }
+          );
         })
         .catch((error) => {
           if (cancelled) return;
@@ -129,7 +139,7 @@ function useCustomVisualData(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [configKey, refreshToken]);
+  }, [configKey, refreshToken, visual.id]);
 
   return state;
 }
@@ -228,7 +238,7 @@ const EMPTY_NOTE = "DACS has no records for this visualization yet.";
 
 /* ---------- Figma builtin visuals ---------- */
 
-function BuiltinChart({
+const BuiltinChart = memo(function BuiltinChart({
   builtin,
   summary,
 }: {
@@ -289,15 +299,17 @@ function BuiltinChart({
     default:
       return null;
   }
-}
+});
 
 /* ---------- custom (Create Visual) rendering ---------- */
 
-function CustomVisualBody({
-  visual,
+const CustomVisualBody = memo(function CustomVisualBody({
+  type,
+  title,
   state,
 }: {
-  visual: DashboardVisual;
+  type: DashboardVisual["type"];
+  title: string;
   state: CustomDataState;
 }) {
   if (state.status === "loading") return <ChartLoading />;
@@ -318,7 +330,7 @@ function CustomVisualBody({
   const format = result.measure.format;
   const valueFormatter = (value: number) => formatMeasureValue(value, format);
 
-  switch (visual.type) {
+  switch (type) {
     case "clustered-bar":
       return (
         <EChartsBarChart
@@ -431,7 +443,7 @@ function CustomVisualBody({
             value: series[0]?.data[i] ?? 0,
           }))}
           valueFormatter={valueFormatter}
-          ariaLabel={`${visual.title} map of the Philippines`}
+          ariaLabel={`${title} map of the Philippines`}
         />
       );
     case "kpi": {
@@ -447,7 +459,7 @@ function CustomVisualBody({
       );
     }
   }
-}
+});
 
 function DataTable({
   categories,
@@ -509,7 +521,7 @@ export function VisualBody({
     return <BuiltinChart builtin={visual.builtin} summary={summary} />;
   }
 
-  return <CustomVisualBody visual={visual} state={state} />;
+  return <CustomVisualBody type={visual.type} title={visual.title} state={state} />;
 }
 
 /* KPI card variant used for both builtin and configured KPI visuals. */
@@ -548,7 +560,7 @@ export function KpiValue({
           : visual.builtin === "kpi-vet"
             ? byType("VETERINARY_PRODUCT")
             : kpis.seminarCertificatesIssued;
-    return <KpiCard value={formatCount(value)} label={visual.title} />;
+    return <KpiCard value={value == null ? "…" : formatCount(value)} label={visual.title} />;
   }
 
   if (state.status === "loading") {

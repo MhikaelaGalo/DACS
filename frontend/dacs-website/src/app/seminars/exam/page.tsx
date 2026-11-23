@@ -18,6 +18,7 @@ import {
   canAccessView,
   fetchSeminarState,
   pickActiveView,
+  seminarRegistrationHref,
   type SeminarView,
 } from "@/services/seminar.service";
 
@@ -55,7 +56,7 @@ export default function ModuleSeminarExamPage() {
         const { views } = await fetchSeminarState();
         if (cancelled) return;
         const active = pickActiveView(views);
-        if (!active || !canAccessView(active) || !active.started) {
+        if (!active || !canAccessView(active)) {
           router.replace(ROUTES.seminars);
           return;
         }
@@ -66,6 +67,10 @@ export default function ModuleSeminarExamPage() {
          */
         if (active.retakeLocked) {
           router.replace("/seminars/certificate");
+          return;
+        }
+        if (!active.registered) {
+          router.replace(seminarRegistrationHref(active));
           return;
         }
         const firstUnwatched = active.videos.findIndex(

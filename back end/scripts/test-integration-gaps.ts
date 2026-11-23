@@ -18,6 +18,7 @@
  * start and end, restores the test user's role and profile fields.
  */
 import { assertTestServer } from "./lib/test-env";
+import { getDashboardFixtureAccount } from "./lib/dashboard-fixture";
 
 import { readFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
@@ -148,7 +149,7 @@ async function getWebApiKey(projectId: string): Promise<string | null> {
   }
 }
 
-async function cleanupFixtures(testUserId: string | null): Promise<void> {
+async function cleanupFixtures(dashboardAccountId: string): Promise<void> {
   await prisma.seminarModule.deleteMany({
     where: { moduleNumber: FIXTURE_MODULE_NUMBER },
   });
@@ -178,9 +179,7 @@ async function cleanupFixtures(testUserId: string | null): Promise<void> {
     },
   });
 
-  if (testUserId) {
-    await prisma.dashboardVisual.deleteMany({ where: { userId: testUserId } });
-  }
+  await prisma.dashboardVisual.deleteMany({ where: { userId: dashboardAccountId } });
 }
 
 async function setRole(
@@ -260,7 +259,8 @@ async function main(): Promise<void> {
   }
   const originalOccupation = profile.occupation;
 
-  await cleanupFixtures(dacsUser.id);
+  const dashboardAccount = await getDashboardFixtureAccount();
+  await cleanupFixtures(dashboardAccount.id);
   await setRole(dacsUser.id, "OWNER_EXECUTIVE");
   record("Test user acting as OWNER_EXECUTIVE", true, dacsUser.email);
 
@@ -1155,8 +1155,11 @@ async function main(): Promise<void> {
 
     const itVisuals = await api("/api/dashboard/visuals", { token });
     record(
-      "K: IT staff keep their own dashboard visuals -> 200",
-      itVisuals.status === 200,
+      "K: IT staff see the same shared visual created by the Owner",
+      itVisuals.status === 200 && itVisuals.body?.data?.some(
+        (visual: { id: string; userId: string }) =>
+          visual.id === builtinVisualId && visual.userId === dashboardAccount.id
+      ),
       `status=${itVisuals.status}`
     );
 
@@ -1239,7 +1242,7 @@ async function main(): Promise<void> {
       where: { id: profile.id },
       data: { occupation: originalOccupation },
     });
-    await cleanupFixtures(dacsUser.id);
+    await cleanupFixtures(dashboardAccount.id);
 
     if (certificateTemplateUrl) {
       try {

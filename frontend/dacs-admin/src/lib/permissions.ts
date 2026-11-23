@@ -4,7 +4,10 @@
  * the matrix immediately changes what a Staff session can open.
  * Integration swap: GET/PUT a permissions endpoint instead of storage.
  */
+import { createContext } from "react";
 import { readStorage, STORAGE_KEYS, writeStorage } from "./storage";
+
+export const DashboardEditingContext = createContext(false);
 
 export const PERMISSION_MODULES = [
   "Dashboard",
@@ -60,12 +63,4 @@ export function getPermissions(): PermissionState {
 
 export function savePermissions(state: PermissionState): void {
   writeStorage(STORAGE_KEYS.permissions, state);
-}
-
-export function roleHasAccess(
-  roleLabel: string,
-  permissionModule: PermissionModule
-): boolean {
-  const state = getPermissions();
-  return state.grants[permissionModule]?.[roleLabel] ?? true;
 }

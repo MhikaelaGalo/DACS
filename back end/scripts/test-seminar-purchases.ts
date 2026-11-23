@@ -26,6 +26,7 @@
  * Run: npx tsx scripts/test-seminar-purchases.ts
  */
 import { assertTestServer } from "./lib/test-env";
+import { seminarRegistrationBody } from "./lib/seminar-registration";
 
 import { readFileSync } from "node:fs";
 
@@ -710,9 +711,10 @@ async function main(): Promise<void> {
   );
 
   // ---- Complete the free prerequisite module through the API -------------
-  const startFree = await api(`/api/seminars/modules/${freeModule.id}/start`, {
+  const registration = await api("/api/seminars/registrations", {
     method: "POST",
     token: farmerToken,
+    body: seminarRegistrationBody(freeModule.id, paidModule.id),
   });
   const freeVideoDone = await api(
     `/api/seminars/videos/${fixtureVideos[freeModule.id]}/progress`,
@@ -741,7 +743,7 @@ async function main(): Promise<void> {
   });
   record(
     "Free module taken normally (no payment): video + quiz -> completed",
-    startFree.status === 200 &&
+    registration.status === 200 &&
       freeVideoDone.status === 200 &&
       freeSubmit.status === 200 &&
       freeSubmit.body?.data?.moduleCompleted === true,

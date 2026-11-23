@@ -1286,7 +1286,9 @@ export default function SettingsPage() {
                 <tbody>
                   {PERMISSION_MODULES.map((permissionModule) => (
                     <tr key={permissionModule}>
-                      <Td className="text-left font-medium">{permissionModule}</Td>
+                      <Td className="text-left font-medium">
+                        {permissionModule === "Dashboard" ? "Edit dashboard visuals" : permissionModule}
+                      </Td>
                       {permissions.roles.map((role) => (
                         <Td key={role}>
                           <GrantMark

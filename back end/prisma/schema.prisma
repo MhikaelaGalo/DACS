@@ -372,6 +372,7 @@ model Order {
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
   payments      Payment[]
+  confirmationEmail OrderConfirmationEmail?
 
   breederMonitoring BreederMonitoring?
   inquiryTickets    InquiryTicket[]
@@ -386,6 +387,24 @@ model Order {
   @@index([createdAt])
   @@index([paymentDeadlineAt])
   @@map("orders")
+}
+
+// Created with the checkout transaction. The sender removes accepted messages.
+model OrderConfirmationEmail {
+  orderId       String    @id @map("order_id")
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sender        String
+  recipient     String
+  subject       String
+  html          String
+  text          String
+  createdAt     DateTime  @default(now()) @map("created_at")
+  nextAttemptAt DateTime? @default(now()) @map("next_attempt_at")
+  attempts      Int       @default(0)
+  lastError     String?   @map("last_error")
+
+  @@index([nextAttemptAt])
+  @@map("order_confirmation_emails")
 }
 
 /*
@@ -669,6 +688,7 @@ model SeminarEnrollment {
   moduleId          String @map("module_id")
 
   startedAt      DateTime  @default(now()) @map("started_at")
+  registeredAt   DateTime? @map("registered_at")
   completedAt    DateTime? @map("completed_at")
   lastAccessedAt DateTime  @default(now()) @map("last_accessed_at")
 

@@ -10,6 +10,7 @@
  * primary-farm rules -> staff search/archive -> activity logs.
  */
 import { assertTestServer } from "./lib/test-env";
+import { seminarRegistrationBody } from "./lib/seminar-registration";
 
 import { readFileSync } from "node:fs";
 
@@ -2602,6 +2603,24 @@ async function main(): Promise<void> {
     `progress=${regressProgress.body?.data?.progressPercent}`
   );
 
+  const module1Quiz = `/api/seminars/modules/${createdModules[0].id}/quiz`;
+  const incompleteRegistration = await api("/api/seminars/registrations", {
+    method: "POST", token: idToken, body: { moduleIds: [createdModules[0].id] },
+  });
+  const unregisteredRead = await api(module1Quiz, { token: idToken });
+  const unregisteredSubmit = await api(module1Quiz, {
+    method: "POST", token: idToken,
+    body: { answers: [{ questionId: questionM1a.id, choiceId: correctChoice(questionM1a) }] },
+  });
+  record(
+    "Starting a module, watching a video or submitting an incomplete form does not unlock its quiz",
+    incompleteRegistration.status === 400 && unregisteredRead.status === 403 && unregisteredSubmit.status === 403
+  );
+  const registered = await api("/api/seminars/registrations", {
+    method: "POST", token: idToken, body: seminarRegistrationBody(createdModules[0].id),
+  });
+  record("Completed seminar form registers Module 1", registered.status === 200);
+
   const quizPayload = await api(
     `/api/seminars/modules/${createdModules[0]?.id}/quiz`,
     { token: idToken }
@@ -2750,15 +2769,16 @@ async function main(): Promise<void> {
     earlyCertificate.body?.message ?? `status ${earlyCertificate.status}`
   );
 
-  // Complete Modules 2 and 3: start -> video 100% -> pass quiz.
+  // Complete Modules 2 and 3: register -> video 100% -> pass quiz.
   let lastCompletion = false;
   for (const [index, question] of [questionM2, questionM3].entries()) {
     const module = createdModules[index + 1];
     const video = createdVideos[index + 1];
 
-    await api(`/api/seminars/modules/${module?.id}/start`, {
+    await api("/api/seminars/registrations", {
       method: "POST",
       token: idToken,
+      body: seminarRegistrationBody(module.id),
     });
     await api(`/api/seminars/videos/${video?.id}/progress`, {
       method: "PATCH",

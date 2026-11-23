@@ -4,6 +4,7 @@
  * browser — scoring is entirely server-side.
  */
 import { api, apiFetchBlob } from "../api";
+import type { SeminarRegistrationFormValues } from "../validation/seminar";
 
 /* GET /api/seminars/modules -> data[n] (published, farmer view). */
 export interface ApiSeminarVideo {
@@ -56,6 +57,7 @@ export interface ApiModuleProgress {
   title: string;
   passingScore: number;
   started: boolean;
+  registered: boolean;
   startedAt: string | null;
   completedAt: string | null;
   totalVideos: number;
@@ -204,8 +206,11 @@ export async function getMyProgress(): Promise<ApiMyProgress> {
   return response.data;
 }
 
-export async function startModule(moduleId: string): Promise<void> {
-  await api.post(`/api/seminars/modules/${moduleId}/start`);
+export async function submitSeminarRegistration(
+  values: Omit<SeminarRegistrationFormValues, "seminarIds">,
+  moduleIds: string[]
+): Promise<void> {
+  await api.post("/api/seminars/registrations", { ...values, moduleIds });
 }
 
 export async function reportVideoProgress(

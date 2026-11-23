@@ -4,21 +4,22 @@ import Image from "next/image";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Footer } from "@/components/layout/Footer";
 import { SeminarCard } from "@/components/seminars/SeminarCard";
 import { useCart } from "@/components/providers/CartProvider";
 import { ROUTES } from "@/constants/routes";
 import { errorMessage } from "@/lib/api";
+import { listSeminarModules, type ApiMyProgress, type ApiSeminarModule } from "@/lib/api/seminars";
 import {
   canAccessView,
   certificateAvailableOn,
-  ensureStarted,
-  fetchSeminarState,
+  seminarRegistrationHref,
+  buildSeminarState,
+  fetchSeminarProgress,
   lockReasonFor,
   nextModuleAfter,
   setActiveSeminarId,
-  type SeminarCompletion,
   type SeminarView,
 } from "@/services/seminar.service";
 
@@ -36,92 +37,77 @@ import {
 export default function SeminarsPage() {
   const router = useRouter();
   const { addSeminarItem, hasItem } = useCart();
-  const [seminars, setSeminars] = useState<SeminarView[]>([]);
-  // The account's seminar cycle from the backend — whether Modules 1-3
-  // are finished and still inside their 2-year validity.
-  const [completion, setCompletion] = useState<SeminarCompletion | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [modules, setModules] = useState<ApiSeminarModule[] | null>(null);
+  // undefined means access is unknown. A successful 404 for a missing profile
+  // uses the same first-time customer rules as the quiz and module pages.
+  const [progress, setProgress] = useState<ApiMyProgress | null>();
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [progressError, setProgressError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
-  const [serviceError, setServiceError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  // Shared by the initial load and the focus refresh so the same
-  // catalog+progress pair is never fetched twice at once.
-  const refreshingRef = useRef(false);
-  const lastRefreshRef = useRef(0);
+  const { views: seminars, completion } = useMemo(
+    () => buildSeminarState(modules ?? [], progress ?? null),
+    [modules, progress]
+  );
+  const accessKnown = progress !== undefined && !progressError && !catalogError;
 
   useEffect(() => {
-    // window.location is read in the effect instead of useSearchParams so the
-    // statically prerendered page needs no Suspense boundary; the query is
-    // cleaned afterwards so the banner never reappears on refresh.
-    const params = new URLSearchParams(window.location.search);
-    const lockedParam = params.get("locked");
-    if (lockedParam && /^module-\d+$/.test(lockedParam)) {
-      router.replace(ROUTES.seminars, { scroll: false });
-    }
+    let active = true;
+    let busy = false;
+    let lastRefresh = 0;
+    let lockedId = new URLSearchParams(window.location.search).get("locked");
+    if (lockedId) router.replace(ROUTES.seminars, { scroll: false });
 
-    let cancelled = false;
-    // Shares the in-flight/cooldown refs with the focus refresh below, so
-    // the focus event the browser fires right after load cannot repeat
-    // this same catalog+progress pair.
-    refreshingRef.current = true;
-    fetchSeminarState()
-      .then(({ views, completion: cycle }) => {
-        if (cancelled) return;
-        setSeminars(views);
-        setCompletion(cycle);
-        setLoading(false);
-        // The banner explains exactly why the bounced module is locked
-        // (previous module, purchase, or pending payment).
-        const bounced = views.find((view) => view.id === lockedParam);
+    async function load() {
+      if (busy) return;
+      busy = true;
+      const [catalog, account] = await Promise.allSettled([
+        listSeminarModules().then((result) => {
+          if (active) {
+            setModules(result);
+            setCatalogError(null);
+          }
+          return result;
+        }).catch((error: unknown) => {
+          if (active) setCatalogError(errorMessage(error, "Unable to load the seminar catalog."));
+          throw error;
+        }),
+        fetchSeminarProgress().then((result) => {
+          if (active) {
+            setProgress(result);
+            setProgressError(false);
+          }
+          return result;
+        }).catch((error: unknown) => {
+          if (active) setProgressError(true);
+          throw error;
+        }),
+      ]);
+      if (!active) return;
+      busy = false;
+      lastRefresh = Date.now();
+      if (lockedId && catalog.status === "fulfilled" && account.status === "fulfilled") {
+        const views = buildSeminarState(catalog.value, account.value).views;
+        const bounced = views.find((view) => view.id === lockedId);
         const reason = bounced && lockReasonFor(bounced);
-        if (bounced && reason) {
-          setLockedNotice(`Module ${bounced.moduleNumber} is locked. ${reason}`);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoading(false);
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        lastRefreshRef.current = Date.now();
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  /* Refetch when the tab regains focus so a staff approval (payment
-     verified) unlocks the module without any manual workaround.
-     Returning to a tab fires visibilitychange AND focus, which used to
-     run the whole catalog+progress refetch twice back to back; one
-     in-flight guard plus a short cooldown keeps the refresh (the point
-     of this effect) while dropping the duplicate. */
-  useEffect(() => {
-    function refresh() {
-      if (document.visibilityState !== "visible") return;
-      if (refreshingRef.current) return;
-      if (Date.now() - lastRefreshRef.current < 1000) return;
-      refreshingRef.current = true;
-      fetchSeminarState()
-        .then(({ views, completion: cycle }) => {
-          setSeminars(views);
-          setCompletion(cycle);
-        })
-        .catch(() => {
-          /* keep the last good views */
-        })
-        .finally(() => {
-          refreshingRef.current = false;
-          lastRefreshRef.current = Date.now();
-        });
+        if (bounced && reason) setLockedNotice(`Module ${bounced.moduleNumber} is locked. ${reason}`);
+        lockedId = null;
+      }
     }
+
+    function refresh() {
+      if (document.visibilityState === "visible" && Date.now() - lastRefresh >= 1000) void load();
+    }
+    void load();
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
+      active = false;
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, []);
+  }, [router, attempt]);
 
   const visibleSeminars = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -129,23 +115,13 @@ export default function SeminarsPage() {
     return seminars.filter((s) => s.title.toLowerCase().includes(term));
   }, [seminars, query]);
 
-  /** Opens a module's own flow: its videos, or its exam when it has none.
-   *  Free/purchased modules the farmer never formally registered for are
-   *  enrolled (idempotently) on entry. */
-  async function openModuleFlow(seminar: SeminarView) {
-    setServiceError(null);
-    try {
-      await ensureStarted(seminar);
-    } catch (error) {
-      setServiceError(
-        errorMessage(error, "Unable to open this module right now.")
-      );
+  function openModuleFlow(seminar: SeminarView) {
+    setActiveSeminarId(seminar.id);
+    if (!seminar.registered) {
+      router.push(seminarRegistrationHref(seminar));
       return;
     }
-    setActiveSeminarId(seminar.id);
-    router.push(
-      seminar.videos.length === 0 ? "/seminars/exam" : "/seminars/modules/1"
-    );
+    router.push(seminar.videos.length === 0 ? "/seminars/exam" : "/seminars/modules/1");
   }
 
   /**
@@ -153,9 +129,9 @@ export default function SeminarsPage() {
    * sequence — and opens the one Certificate of Attendance — or points at
    * the next module. Finishing Module 1 or 2 never opens a certificate.
    */
-  async function handleTake(seminar: SeminarView, completed: boolean) {
+  function handleTake(seminar: SeminarView, completed: boolean) {
     if (!completed) {
-      await openModuleFlow(seminar);
+      openModuleFlow(seminar);
       return;
     }
 
@@ -180,7 +156,7 @@ export default function SeminarsPage() {
       );
       return;
     }
-    await openModuleFlow(next);
+    openModuleFlow(next);
   }
 
   /** Add to Cart for a paid module — the ordinary DACS cart, quantity 1. */
@@ -262,31 +238,30 @@ export default function SeminarsPage() {
         </Link>
       </section>
 
-      {/* Service errors (e.g. enrollment on Take Now failed) */}
-      {serviceError && (
-        <section className="mx-auto mt-[24px] max-w-[1440px] px-[20px] lg:px-[65px]">
-          <p role="alert" className="text-[15px] font-semibold leading-normal text-[#c00]">
-            {serviceError}
-          </p>
-        </section>
-      )}
-
       {/* Seminar cards */}
       <section className="mx-auto mt-[60px] flex max-w-[1440px] flex-col gap-[40px] px-[20px] lg:mt-[71px] lg:gap-[44px] lg:px-[65px]">
+        {(catalogError || (progressError && !!modules?.length)) && (
+          <div role="alert" className="text-center">
+            <p>{catalogError ?? "We couldn’t load your seminar progress. Try again to see which modules you can take."}</p>
+            <button type="button" className="mt-2 font-semibold underline" onClick={() => {
+              setCatalogError(null);
+              setAttempt((current) => current + 1);
+            }}>
+              Try again
+            </button>
+          </div>
+        )}
         {visibleSeminars.map((seminar) => {
-          const registered = seminar.started;
-          // The views carry each module's own backend access verdict
-          // (prerequisite + purchase), so all flags come straight from
-          // server truth (cards only render after the catalog+progress
-          // fetch resolves — no unlock flash).
-          const completed = seminar.status === "Completed";
-          const locked = !completed && !canAccessView(seminar);
+          const registered = accessKnown && seminar.registered;
+          const completed = accessKnown && seminar.status === "Completed";
+          const locked = accessKnown && !completed && !canAccessView(seminar);
           return (
             <SeminarCard
               key={seminar.id}
               seminar={seminar}
               durationLabel={seminar.durationLabel}
               speaker={seminar.speaker}
+              accessKnown={accessKnown}
               registered={registered}
               completed={completed}
               locked={locked}
@@ -301,22 +276,22 @@ export default function SeminarsPage() {
                       : null
               }
               detailsHref={
-                registered ? "/seminars/modules/1" : ROUTES.seminarRegistration
+                registered || completed ? "/seminars/modules/1" : seminarRegistrationHref(seminar)
               }
-              onTake={() => void handleTake(seminar, completed)}
+              onTake={() => handleTake(seminar, completed)}
               onAddToCart={() => handleAddToCart(seminar)}
               inCart={hasItem(seminar.moduleId)}
             />
           );
         })}
-        {loading && (
+        {modules === null && !catalogError && (
           <p className="text-center text-[18px] leading-normal text-[#7d7d7d]">
             Loading seminar modules...
           </p>
         )}
-        {!loading && visibleSeminars.length === 0 && (
+        {modules !== null && !catalogError && visibleSeminars.length === 0 && (
           <p className="text-center text-[18px] leading-normal text-[#7d7d7d]">
-            No seminar modules found.
+            {modules.length ? "No seminar modules match your search." : "No seminar modules are currently published."}
           </p>
         )}
       </section>

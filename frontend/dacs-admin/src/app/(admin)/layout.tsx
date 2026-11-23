@@ -8,18 +8,20 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { AccessDenied } from "@/components/ui/AccessDenied";
 import { ToastProvider } from "@/components/ui/Toast";
 import {
+  cacheStaffSession,
+  fetchStaffSession,
   getSession,
   ROLE_LABELS,
-  setSessionRole,
   signOut,
   type StaffSession,
 } from "@/lib/auth";
-import { refreshPermissionCache } from "@/lib/api/permissions";
+import { ApiError } from "@/lib/api";
+import { fetchPermissionMatrix } from "@/lib/api/permissions";
 import { getCurrentFirebaseUser } from "@/lib/firebase";
-import { roleHasAccess, type PermissionModule } from "@/lib/permissions";
+import { DashboardEditingContext, type PermissionModule, type PermissionState } from "@/lib/permissions";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 const SECTION_MODULES: Record<string, PermissionModule> = {
-  dashboard: "Dashboard",
   customers: "Customer Information",
   forms: "Forms",
   historical: "Historical Data",
@@ -29,7 +31,6 @@ const SECTION_MODULES: Record<string, PermissionModule> = {
 const PAGE_NAMES: Record<string, string> = {
   forms: "the Forms page",
   historical: "Historical Data",
-  dashboard: "the Dashboard",
   customers: "Customer Information",
   settings: "Settings",
 };
@@ -38,58 +39,69 @@ export default function AdminLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const router = useRouter();
-  const pathname = usePathname();
   const [session, setSession] = useState<StaffSession | null>(null);
-  const [checked, setChecked] = useState(false);
-
-  /*
-   * Page gating reads the cached permission matrix synchronously; the
-   * cache itself is server truth, refreshed once per app load (and by
-   * the Settings matrix after every change).
-   */
-  useEffect(() => {
-    void refreshPermissionCache();
-  }, []);
+  const [sessionError, setSessionError] = useState(false);
 
   useEffect(() => {
-    const current = getSession();
-    if (!current) {
+    if (!getSession()) {
       router.replace("/sign-in");
       return;
     }
-    setSession(current);
-    setChecked(true);
-
-    /*
-     * The cached session must be backed by a live Firebase user — API
-     * calls need its ID token. If Firebase lost the sign-in (cleared
-     * site data, revoked account), drop the stale cache and re-enter
-     * through the sign-in flow.
-     */
     let cancelled = false;
-    void getCurrentFirebaseUser().then((user) => {
-      if (cancelled || user) return;
-      signOut();
-      router.replace("/sign-in");
-    });
+    async function verifySession() {
+      try {
+        const user = await getCurrentFirebaseUser();
+        if (cancelled) return;
+        if (!user) throw new ApiError(401, "Sign-in required.");
+        const verified = await fetchStaffSession(user.displayName);
+        if (cancelled) return;
+        // Replace any role saved by older versions before rendering admin pages.
+        cacheStaffSession(verified);
+        setSession(verified);
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          signOut();
+          router.replace("/sign-in");
+        } else {
+          setSessionError(true);
+        }
+      }
+    }
+    void verifySession();
     return () => {
       cancelled = true;
     };
-  }, [router, pathname]);
+  }, [router]);
 
-  if (!checked || !session) {
-    return null;
+  if (sessionError) return <p className="p-6">Unable to verify your account. Refresh the page to try again.</p>;
+  if (!session) return null;
+  return <AdminShell session={session}>{children}</AdminShell>;
+}
+
+function AdminShell({ session, children }: { session: StaffSession; children: React.ReactNode }) {
+  const pathname = usePathname();
+  const [permissions, setPermissions] = useState<PermissionState | null>(null);
+  const [permissionError, setPermissionError] = useState(false);
+  useAutoRefresh(async () => {
+    try {
+      setPermissions(await fetchPermissionMatrix());
+      setPermissionError(false);
+    } catch {
+      setPermissionError(true);
+    }
+  }, 15_000);
+
+  if (!permissions) {
+    return <p className="p-6">{permissionError ? "Unable to load permissions. Retrying…" : "Loading permissions…"}</p>;
   }
-
-  /*
-   * Access is driven by the Roles and Permission matrix in Settings, so
-   * granting Staff the Forms module there immediately unlocks the page.
-   */
+  const role = ROLE_LABELS[session.role];
   const section = pathname.split("/")[1] ?? "";
   const permissionModule = SECTION_MODULES[section];
   const restricted =
     permissionModule !== undefined &&
-    !roleHasAccess(ROLE_LABELS[session.role], permissionModule);
+    permissions.grants[permissionModule]?.[role] !== true;
+  const canEditDashboard = !permissionError && permissions.grants.Dashboard?.[role] === true;
 
   return (
     <ToastProvider>
@@ -98,12 +110,11 @@ export default function AdminLayout({
         <Sidebar />
         <main className="flex min-w-0 flex-1 flex-col px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
           {restricted ? (
-            <AccessDenied
-              pageName={PAGE_NAMES[section] ?? "this page"}
-              onRoleSelected={(role) => setSession(setSessionRole(role))}
-            />
+            <AccessDenied pageName={PAGE_NAMES[section] ?? "this page"} />
           ) : (
-            children
+            <DashboardEditingContext.Provider value={canEditDashboard}>
+              {children}
+            </DashboardEditingContext.Provider>
           )}
         </main>
       </div>

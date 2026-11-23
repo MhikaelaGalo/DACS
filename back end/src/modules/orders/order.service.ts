@@ -11,6 +11,8 @@ import { HttpError } from "../../utils/httpError";
 import type { RequestMeta } from "../auth/auth.service";
 import { startBreederMonitoringForReleasedOrder } from "../breeders/breeder.service";
 import { notifyStaff } from "../notifications/notification.service";
+import { orderEmailSender } from "./order-confirmation.sender";
+import { buildOrderConfirmation } from "./order-confirmation.template";
 import {
   countCompletedRequiredModules,
   REQUIRED_MODULE_NUMBERS,
@@ -24,6 +26,9 @@ import {
  * arrives without an order number.
  */
 export const ORDER_NUMBER_LOCK_KEY = 43010002;
+
+// Allow for the database round trips that save the order, receipt and staff notifications together.
+const CHECKOUT_TRANSACTION_TIMEOUT_MS = 30_000;
 
 /*
  * Order numbers follow the client's quotation format: OQ-VET-2026-001.
@@ -116,9 +121,15 @@ export async function createOrderForUser(
   meta: RequestMeta
 ) {
   return prisma.$transaction(async (transaction) => {
-    const customerProfile = await getActiveProfileForUser(transaction, userId);
+    const customerProfile = await transaction.customerProfile.findFirst({
+      where: { userId, archivedAt: null },
+      select: {
+        id: true, customerNumber: true, firstName: true, lastName: true,
+        user: { select: { email: true } },
+      },
+    });
 
-    if (!customerProfile) {
+    if (!customerProfile?.user) {
       throw new HttpError(
         404,
         "No active customer profile is linked to this account."
@@ -388,6 +399,17 @@ export async function createOrderForUser(
       include: ORDER_INCLUDE,
     });
 
+    const sender = orderEmailSender();
+    if (sender) {
+      const name = `${customerProfile.firstName} ${customerProfile.lastName}`.trim();
+      await transaction.orderConfirmationEmail.create({
+        data: {
+          orderId: order.id, sender, recipient: customerProfile.user.email,
+          ...buildOrderConfirmation(order, name),
+        },
+      });
+    }
+
     await recordActivity(transaction, {
       userId,
       module: "ORDERS",
@@ -414,7 +436,7 @@ export async function createOrderForUser(
     });
 
     return order;
-  });
+  }, { timeout: CHECKOUT_TRANSACTION_TIMEOUT_MS });
 }
 
 /*

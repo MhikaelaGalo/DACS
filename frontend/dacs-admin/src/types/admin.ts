@@ -17,49 +17,15 @@ export type OrderStatus =
 
 export type OrderType = "PARENT_STOCK" | "F1" | "VETERINARY_PRODUCT" | "SEMINAR";
 
-/* GET /api/analytics/dashboard -> data */
+/* Values displayed by the built-in cards on the shared dashboard. */
 export interface DashboardSummary {
-  generatedAt: string;
   kpis: {
-    totalCustomers: number;
-    totalFarms: number;
-    totalOrders: number;
-    paidRevenue: number;
-    salesByType: Array<{ orderType: OrderType; sales: number; revenue: number }>;
-    activeBreeders: number;
-    openTickets: number;
-    seminarCertificatesIssued: number;
+    salesByType: Array<{ orderType: OrderType; sales: number }>;
+    seminarCertificatesIssued: number | null;
   };
   charts: {
-    salesPerMonth: Array<{
-      month: string;
-      orders: number;
-      paidOrders: number;
-      revenue: number;
-    }>;
-    ordersByStatus: Array<{ status: OrderStatus; count: number }>;
-    ordersByType: Array<{ orderType: OrderType; orders: number; orderedAmount: number }>;
-    paymentStatus: Array<{ status: string; count: number; amount: number }>;
-    seminarByModule: Array<{
-      moduleNumber: number;
-      title: string;
-      enrolled: number;
-      completed: number;
-      completionRate: number;
-    }>;
-    breederStatus: Array<{ status: string; count: number }>;
-    breedersByRegion: Array<{
-      region: string;
-      province: string;
-      total: number;
-      active: number;
-      pending: number;
-      expired: number;
-      ineligible: number;
-    }>;
-    customersByRegion: Array<{ region: string; count: number }>;
-    inquiryStatus: Array<{ status: string; count: number }>;
-    inquiriesPerMonth: Array<{ month: string; tickets: number }>;
+    salesPerMonth: Array<{ month: string; paidOrders: number }>;
+    breedersByRegion: Array<{ province: string; active: number }>;
   };
 }
 

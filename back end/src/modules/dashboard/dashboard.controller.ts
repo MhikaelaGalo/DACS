@@ -8,16 +8,18 @@ import {
   requiredUuid,
 } from "../../utils/validation";
 import {
-  createVisualForUser,
-  deleteVisualForUser,
-  getVisualsForUser,
-  reorderVisualsForUser,
-  updateVisualForUser,
+  createVisualOnSharedDashboard,
+  deleteVisualOnSharedDashboard,
+  getSharedVisuals,
+  getSharedVisualData,
+  reorderVisualsOnSharedDashboard,
+  updateVisualOnSharedDashboard,
   VISUAL_TYPES,
   type CreateVisualInput,
   type UpdateVisualInput,
   type VisualType,
 } from "./dashboard.service";
+import { getDashboardSummary } from "../analytics/analytics.service";
 
 const VISUAL_FIELDS = [
   "visualType",
@@ -68,21 +70,56 @@ function requireVisualType(value: unknown): VisualType {
 }
 
 export async function listVisuals(
-  request: Request,
+  _request: Request,
   response: Response,
   next: NextFunction
 ): Promise<void> {
   try {
-    const actor = requireActor(request, response);
-    if (!actor) return;
-
-    const visuals = await getVisualsForUser(actor.id);
-
+    const visuals = await getSharedVisuals();
     response.json({
       success: true,
       count: visuals.length,
       data: visuals,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function savedVisualData(request: Request, response: Response, next: NextFunction) {
+  try {
+    const visualId = requiredUuid(request.params.visualId, "The visual ID");
+    response.json({ success: true, data: await getSharedVisualData(visualId) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function sharedSummary(_request: Request, response: Response, next: NextFunction) {
+  try {
+    const visuals = await getSharedVisuals();
+    const builtins = new Set(visuals.map((visual) => visual.builtin));
+    const orderTypes = new Map([
+      ["PARENT_STOCK", "kpi-ps"], ["F1", "kpi-f1"], ["VETERINARY_PRODUCT", "kpi-vet"],
+    ]);
+    const summary = await getDashboardSummary({});
+    // Only return the values used by the published cards. Detailed reports
+    // and arbitrary queries remain subject to the analytics permissions.
+    const salesByType = summary.kpis.salesByType
+      .filter((row) => builtins.has(orderTypes.get(row.orderType) ?? ""))
+      .map(({ orderType, sales }) => ({ orderType, sales }));
+    response.json({ success: true, data: {
+      kpis: {
+        salesByType,
+        seminarCertificatesIssued: builtins.has("kpi-seminars") ? summary.kpis.seminarCertificatesIssued : null,
+      },
+      charts: {
+        salesPerMonth: builtins.has("monthly-sales")
+          ? summary.charts.salesPerMonth.map(({ month, paidOrders }) => ({ month, paidOrders })) : [],
+        breedersByRegion: builtins.has("cert-map")
+          ? summary.charts.breedersByRegion.map(({ province, active }) => ({ province, active })) : [],
+      },
+    } });
   } catch (error) {
     next(error);
   }
@@ -112,7 +149,7 @@ export async function createVisual(
       builtin: optionalString(raw.builtin, "Builtin identifier", 50),
     };
 
-    const visual = await createVisualForUser(actor.id, input, {
+    const visual = await createVisualOnSharedDashboard(actor.id, input, {
       ipAddress: request.ip,
       userAgent: request.headers["user-agent"],
     });
@@ -175,7 +212,7 @@ export async function updateVisual(
       input.legendField = optionalString(raw.legendField, "Legend field", 100);
     }
 
-    const visual = await updateVisualForUser(actor.id, visualId, input, {
+    const visual = await updateVisualOnSharedDashboard(actor.id, visualId, input, {
       ipAddress: request.ip,
       userAgent: request.headers["user-agent"],
     });
@@ -201,7 +238,7 @@ export async function deleteVisual(
 
     const visualId = requiredUuid(request.params.visualId, "The visual ID");
 
-    const visual = await deleteVisualForUser(actor.id, visualId, {
+    const visual = await deleteVisualOnSharedDashboard(actor.id, visualId, {
       ipAddress: request.ip,
       userAgent: request.headers["user-agent"],
     });
@@ -243,7 +280,7 @@ export async function reorderVisuals(
       requiredUuid(value, "Every entry in orderedVisualIds")
     );
 
-    const visuals = await reorderVisualsForUser(actor.id, orderedVisualIds, {
+    const visuals = await reorderVisualsOnSharedDashboard(actor.id, orderedVisualIds, {
       ipAddress: request.ip,
       userAgent: request.headers["user-agent"],
     });

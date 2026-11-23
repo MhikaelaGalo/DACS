@@ -18,11 +18,8 @@ import type { RequestMeta } from "../auth/auth.service";
  * src/config/permissions.ts; the API always answers with the EFFECTIVE
  * matrix so the frontend never has to merge.
  *
- * Scope note: matrix grants gate admin PAGES in the frontend. The
- * backend's hard route guards (authorizeRoles + the access lists in
- * config/permissions.ts) are the security boundary and are never
- * derived from these rows — a matrix change can therefore never grant
- * anyone new API access.
+ * Most grants control admin page access. The Dashboard grant controls
+ * layout editing and is also enforced by the dashboard write routes.
  */
 
 export interface PermissionUpdate {

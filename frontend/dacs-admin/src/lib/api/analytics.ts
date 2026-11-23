@@ -1,10 +1,4 @@
-/*
- * Analytics + per-user dashboard-visual endpoints. Mirrors
- * back end/src/modules/analytics and back end/src/modules/dashboard.
- *
- * Analytics is Owner + Administrative Staff; visual DEFINITIONS are
- * available to every staff role (each user lays out their own board).
- */
+/* Staff read the shared board. The Dashboard edit grant controls the builder and writes. */
 import { api } from "../api";
 import type {
   AnalyticsFieldCatalog,
@@ -16,7 +10,7 @@ import type {
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   const response = await api.get<{ data: DashboardSummary }>(
-    "/api/analytics/dashboard"
+    "/api/dashboard/summary"
   );
   return response.data;
 }
@@ -28,7 +22,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
  */
 export async function getAnalyticsFields(): Promise<AnalyticsFieldCatalog> {
   const response = await api.get<{ data: AnalyticsFieldCatalog }>(
-    "/api/analytics/fields"
+    "/api/dashboard/fields"
   );
   return response.data;
 }
@@ -50,7 +44,7 @@ export async function runAnalyticsQuery(
   params: AnalyticsQueryParams
 ): Promise<AnalyticsQueryResult> {
   const response = await api.get<{ data: AnalyticsQueryResult }>(
-    "/api/analytics/query",
+    "/api/dashboard/preview",
     {
       dataset: params.dataset,
       xField: params.xField ?? undefined,
@@ -93,10 +87,12 @@ export function toDashboardVisual(visual: ApiDashboardVisual): DashboardVisual {
   };
 }
 
-export async function listDashboardVisuals(): Promise<ApiDashboardVisual[]> {
-  const response = await api.get<{ data: ApiDashboardVisual[] }>(
-    "/api/dashboard/visuals"
-  );
+export function listDashboardVisuals() {
+  return api.get<{ data: ApiDashboardVisual[] }>("/api/dashboard/visuals");
+}
+
+export async function getSavedVisualData(id: string): Promise<AnalyticsQueryResult> {
+  const response = await api.get<{ data: AnalyticsQueryResult }>(`/api/dashboard/visuals/${id}/data`);
   return response.data;
 }
 

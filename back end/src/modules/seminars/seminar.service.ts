@@ -422,38 +422,34 @@ export async function getSeminarCompletionState(
   };
 }
 
-/*
- * Exam gate for a finished seminar. Once Modules 1-3 are complete and
- * the completion is still inside its two-year window, the required
- * modules' exams are closed — the account keeps the result it already
- * earned instead of putting it at risk on a retake. Optional modules
- * outside the required trio, failed attempts and every not-yet-finished
- * seminar are untouched, and the gate lifts by itself at expiry.
- */
-async function assertQuizRetakeAllowed(
+/** Require registration for every quiz and keep completed exams closed
+ *  during the two-year certificate validity window. */
+async function requireQuizEnrollment(
   client: Prisma.TransactionClient,
   customerProfileId: string,
   module: { id: string; moduleNumber: number }
-): Promise<void> {
-  if (!REQUIRED_MODULE_NUMBERS.includes(module.moduleNumber)) return;
-
+) {
   const enrollment = await client.seminarEnrollment.findUnique({
     where: {
       customerProfileId_moduleId: { customerProfileId, moduleId: module.id },
     },
-    select: { completedAt: true },
+    select: { id: true, registeredAt: true, completedAt: true },
   });
 
-  if (!enrollment?.completedAt) return;
-
-  const completion = await getSeminarCompletionState(client, customerProfileId);
-  if (!completion.retakeLocked) return;
-
-  throw new HttpError(
-    409,
-    "You have already completed this seminar. Your Certificate of Attendance stays valid until " +
-      `${completion.completionValidUntil?.toISOString().slice(0, 10)} — the exams reopen after that date.`
-  );
+  if (enrollment?.completedAt && REQUIRED_MODULE_NUMBERS.includes(module.moduleNumber)) {
+    const completion = await getSeminarCompletionState(client, customerProfileId);
+    if (completion.retakeLocked) {
+      throw new HttpError(
+        409,
+        "You have already completed this seminar. Your Certificate of Attendance stays valid until " +
+          `${completion.completionValidUntil?.toISOString().slice(0, 10)} — the exams reopen after that date.`
+      );
+    }
+  }
+  if (!enrollment?.registeredAt) {
+    throw new HttpError(403, "Complete the seminar registration form for this module before taking its quiz.");
+  }
+  return enrollment;
 }
 
 export interface CreateModuleInput {
@@ -1864,6 +1860,28 @@ export async function getSeminarProgressOverview() {
  * ---------- Farmer learning path ----------
  */
 
+export async function registerSeminarModules(userId: string, moduleIds: string[]) {
+  await prisma.$transaction(async (tx) => {
+    const customer = requireProfile(await getActiveProfileForUser(tx, userId));
+    const available = await tx.seminarModule.count({
+      where: { id: { in: moduleIds }, isPublished: true, archivedAt: null },
+    });
+    if (available !== moduleIds.length) {
+      throw new HttpError(404, "One or more selected seminar modules are unavailable.");
+    }
+    const registeredAt = new Date();
+    await tx.seminarEnrollment.createMany({
+      data: moduleIds.map((moduleId) => ({ customerProfileId: customer.id, moduleId, registeredAt })),
+      skipDuplicates: true,
+    });
+    // Confirm older auto-started enrollments without resetting their progress.
+    await tx.seminarEnrollment.updateMany({
+      where: { customerProfileId: customer.id, moduleId: { in: moduleIds }, registeredAt: null },
+      data: { registeredAt },
+    });
+  });
+}
+
 export async function startSeminarModule(userId: string, moduleId: string) {
   return prisma.$transaction(async (transaction) => {
     const customer = requireProfile(
@@ -2034,7 +2052,7 @@ export async function getQuizForModule(userId: string, moduleId: string) {
   await assertModuleContentAccessible(prisma, customer.id, module);
   // A finished seminar inside its 2-year window never serves its exam
   // again — the certificate is retrieved, not re-earned.
-  await assertQuizRetakeAllowed(prisma, customer.id, module);
+  await requireQuizEnrollment(prisma, customer.id, module);
 
   if (module.questions.length === 0) {
     throw new HttpError(404, "This seminar module does not have a quiz yet.");
@@ -2076,7 +2094,7 @@ export async function submitSeminarQuiz(
     await assertModuleContentAccessible(transaction, customer.id, module);
     // Same closed-exam rule as the quiz read, so a hand-made POST cannot
     // put an already-earned completion back on the line.
-    await assertQuizRetakeAllowed(transaction, customer.id, module);
+    const enrollment = await requireQuizEnrollment(transaction, customer.id, module);
 
     if (module.questions.length === 0) {
       throw new HttpError(409, "This seminar module does not have a quiz yet.");
@@ -2102,18 +2120,9 @@ export async function submitSeminarQuiz(
       );
     }
 
-    const enrollment = await transaction.seminarEnrollment.upsert({
-      where: {
-        customerProfileId_moduleId: {
-          customerProfileId: customer.id,
-          moduleId: module.id,
-        },
-      },
-      create: {
-        customerProfileId: customer.id,
-        moduleId: module.id,
-      },
-      update: { lastAccessedAt: new Date() },
+    await transaction.seminarEnrollment.update({
+      where: { id: enrollment.id },
+      data: { lastAccessedAt: new Date() },
     });
 
     /*
@@ -2299,6 +2308,7 @@ export async function getMySeminarProgress(userId: string) {
       title: module.title,
       passingScore: module.passingScore,
       started: enrollment !== null,
+      registered: enrollment?.registeredAt != null,
       startedAt: enrollment?.startedAt ?? null,
       completedAt: enrollment?.completedAt ?? null,
       totalVideos,

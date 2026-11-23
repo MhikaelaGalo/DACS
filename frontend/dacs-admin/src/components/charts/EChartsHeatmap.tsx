@@ -53,6 +53,7 @@ export function EChartsHeatmap({
     const gridBottom = columnLabels.labelDepth + 34;
 
     return {
+      animation: false,
       grid: { left: gridLeft, right: 16, top: 12, bottom: gridBottom },
       tooltip: {
         position: "top",

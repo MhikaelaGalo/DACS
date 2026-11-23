@@ -103,6 +103,11 @@ function dateOnly(value: string | null | undefined): string | null {
   return value ? value.slice(0, 10) : null;
 }
 
+// createdAt is an instant. Quotations and checkout emails use the Philippine business date.
+const quotationDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+});
+
 function toNumber(decimal: string | null | undefined): number {
   const parsed = Number(decimal);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -129,15 +134,22 @@ function vetItemsFor(order: ApiOrder, products: ApiProduct[]): VetLineItem[] {
   const catalog = products.filter(
     (product) => product.category === "VETERINARY_PRODUCT" && product.isActive
   );
-  const rows: VetLineItem[] = catalog.map((product) => {
-    const item = order.items.find((entry) => entry.productId === product.id);
-    return {
+  const rows: VetLineItem[] = catalog.flatMap((product) => {
+    const lines = order.items.filter((entry) => entry.productId === product.id);
+    if (lines.length) return lines.map(item => ({
+      productId: product.id,
+      product: item.productNameSnapshot,
+      quantity: item.quantity,
+      unit: product.unit ?? "",
+      price: toNumber(item.unitPriceSnapshot),
+    }));
+    return [{
       productId: product.id,
       product: product.name,
-      quantity: item?.quantity ?? 0,
+      quantity: 0,
       unit: product.unit ?? "",
-      price: toNumber(item?.unitPriceSnapshot ?? product.unitPrice),
-    };
+      price: toNumber(product.unitPrice),
+    }];
   });
   /* Items whose product left the active catalog still belong on the
      quotation — appended from their snapshots. */
@@ -229,7 +241,7 @@ export function toOrderQueueRow(
     paymentDate: null,
     farmName: null,
     /* The OQ date is when the quotation (order) was created. */
-    oqDate: dateOnly(order.createdAt),
+    oqDate: quotationDate.format(new Date(order.createdAt)),
     depositPercent: order.depositPercent,
     depositDueDate: dateOnly(order.depositDueDate),
     balancePercent:

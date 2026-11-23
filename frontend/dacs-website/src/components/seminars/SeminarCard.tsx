@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Lock } from "lucide-react";
-import type { SeminarView } from "@/services/seminar.service";
+import { setActiveSeminarId, type SeminarView } from "@/services/seminar.service";
 
 // Figma: seminar module card on the Seminars page (203:35 default state,
 // 252:254 registered state with the "Registered" badge + "Take Now" button),
@@ -24,6 +24,7 @@ interface SeminarCardProps {
   seminar: SeminarView;
   durationLabel: string;
   speaker: string;
+  accessKnown: boolean;
   registered: boolean;
   /** Exam passed — shows the green "Completed" badge. */
   completed: boolean;
@@ -54,6 +55,7 @@ export function SeminarCard({
   seminar,
   durationLabel,
   speaker,
+  accessKnown,
   registered,
   completed,
   locked,
@@ -70,7 +72,7 @@ export function SeminarCard({
     !seminar.isFree && seminar.purchaseStatus === "NOT_PURCHASED" && !completed;
   // Take Now appears once the module is startable (registered/completed as
   // before) or openable outright (free/purchased with the sequence done —
-  // enrollment then happens on click).
+  // unregistered farmers are sent to the form on click).
   const showTakeNow = registered || completed || seminar.accessible;
 
   return (
@@ -156,7 +158,7 @@ export function SeminarCard({
           </div>
           {/* Module price: "Free" for free modules, the peso price for paid
               ones, and a green Purchased tag once the payment is verified. */}
-          {purchased ? (
+          {accessKnown && purchased ? (
             <div className="ml-auto flex shrink-0 justify-center lg:-mr-[66px] lg:w-[134px]">
               <span className="rounded-[8px] bg-[#dbfae6] px-[12px] py-[3px] text-[15px] font-semibold leading-normal text-[#116530]">
                 Purchased
@@ -190,9 +192,10 @@ export function SeminarCard({
         {/* mt-auto pins the row to the card bottom when the text is short
             (matching the Figma 305px card exactly); pt guarantees a minimum
             gap below the description when the text wraps taller. */}
-        <div className="mt-[32px] flex flex-wrap gap-[24px] lg:mt-auto lg:gap-[29px] lg:pt-[24px]">
+        {accessKnown && <div className="mt-[32px] flex flex-wrap gap-[24px] lg:mt-auto lg:gap-[29px] lg:pt-[24px]">
           <Link
             href={detailsHref}
+            onClick={() => setActiveSeminarId(seminar.id)}
             className={`${actionButtonBase} bg-[#181818]`}
           >
             <span className="text-[18px] font-bold leading-normal text-[#f4f4f4]">
@@ -254,7 +257,7 @@ export function SeminarCard({
                 </span>
               </button>
             ))}
-        </div>
+        </div>}
       </div>
     </article>
   );

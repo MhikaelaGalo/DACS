@@ -77,6 +77,19 @@ function nameFromEmail(email: string): string {
     .join(" ");
 }
 
+export async function fetchStaffSession(displayName: string | null): Promise<StaffSession> {
+  const { data: account } = await api.get<{ data: DacsAccount }>("/api/auth/me");
+  const role = account.role as StaffRole;
+  if (account.status !== "ACTIVE" || !Object.hasOwn(ROLE_LABELS, role)) {
+    throw new ApiError(403, "This account does not have permission to access the admin portal.");
+  }
+  return { name: displayName || nameFromEmail(account.email), email: account.email, role };
+}
+
+export function cacheStaffSession(session: StaffSession): void {
+  writeStorage(STORAGE_KEYS.session, session);
+}
+
 /* Raw Firebase auth errors are never surfaced to the UI. */
 function friendlyAuthError(error: unknown): string {
   if (error instanceof FirebaseError) {
@@ -127,24 +140,8 @@ export async function signInWithGoogle(): Promise<{
 
   try {
     await api.post("/api/auth/sync");
-    const me = await api.get<{ data: DacsAccount }>("/api/auth/me");
-    const account = me.data;
-
-    const role = account.role as StaffRole;
-    if (!(role in ROLE_LABELS)) {
-      await signOutFirebase();
-      return {
-        error:
-          "This account does not have permission to access the admin portal.",
-      };
-    }
-
-    const session: StaffSession = {
-      name: displayName || nameFromEmail(account.email),
-      email: account.email,
-      role,
-    };
-    writeStorage(STORAGE_KEYS.session, session);
+    const session = await fetchStaffSession(displayName);
+    cacheStaffSession(session);
     return { session };
   } catch (error) {
     /*
@@ -164,18 +161,4 @@ export function signOut(): void {
   removeStorage(STORAGE_KEYS.session);
   /* Fire-and-forget; the redirect to /sign-in does not need to wait. */
   void signOutFirebase();
-}
-
-/*
- * Security Check flow: the user identifies their role explicitly. This
- * only adjusts client-side page gating for the demo flow — the backend
- * authorizes every request from the users.role column regardless, so
- * switching here can never grant real data access.
- */
-export function setSessionRole(role: StaffRole): StaffSession | null {
-  const session = getSession();
-  if (!session) return null;
-  const updated = { ...session, role };
-  writeStorage(STORAGE_KEYS.session, updated);
-  return updated;
 }

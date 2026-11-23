@@ -3,16 +3,8 @@ import type { Prisma } from "../../../generated/prisma/client";
 import { prisma } from "../../config/database";
 import { recordActivity } from "../../services/activityLog.service";
 import { HttpError } from "../../utils/httpError";
-import { validateCustomVisualConfig } from "../analytics/analytics.catalog";
+import { runAnalyticsQuery, validateCustomVisualConfig } from "../analytics/analytics.catalog";
 import type { RequestMeta } from "../auth/auth.service";
-
-/*
- * Dashboard visual DEFINITIONS (Requirement 11's "Create Visual"
- * builder + the shipped default charts). Each staff user manages their
- * own layout, matching the frontend's per-browser behavior. Only the
- * configuration is stored — the analytics endpoints compute the actual
- * chart data live whenever a visual renders.
- */
 
 /* The builder's chart types, mirrored from the admin frontend. */
 export const VISUAL_TYPES = [
@@ -89,19 +81,51 @@ function normalizeConfiguration(visual: {
   return validateCustomVisualConfig(visual);
 }
 
-export async function getVisualsForUser(userId: string) {
+// Reuse the designated account's existing visual IDs, configuration and order.
+const dashboardLayoutEmail = process.env.DACS_TEST_MODE === "1"
+  ? "dashboard-layout@dacs-test.example"
+  : process.env.DASHBOARD_LAYOUT_EMAIL?.trim() || "lemonyfroggo@gmail.com";
+
+async function layoutAccountId(client: Prisma.TransactionClient) {
+  const account = await client.user.findFirst({
+    where: { email: { equals: dashboardLayoutEmail, mode: "insensitive" } },
+    select: { id: true },
+  });
+  if (!account) throw new HttpError(503, "The account that holds the shared dashboard could not be found.");
+  return account.id;
+}
+
+export async function getSharedVisuals() {
+  const userId = await layoutAccountId(prisma);
   return prisma.dashboardVisual.findMany({
     where: { userId },
-    orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   });
 }
 
-export async function createVisualForUser(
-  userId: string,
+export async function getSharedVisualData(visualId: string) {
+  const userId = await layoutAccountId(prisma);
+  const visual = await prisma.dashboardVisual.findFirst({ where: { userId, id: visualId } });
+  if (!visual) throw new HttpError(404, "Dashboard visual was not found.");
+  if (visual.builtin || !visual.dataset || !visual.yField) {
+    throw new HttpError(400, "This visual has no custom data query.");
+  }
+  return runAnalyticsQuery({ ...visual, dataset: visual.dataset, yField: visual.yField });
+}
+
+async function lockLayout(transaction: Prisma.TransactionClient) {
+  const userId = await layoutAccountId(transaction);
+  await transaction.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+  return userId;
+}
+
+export async function createVisualOnSharedDashboard(
+  actorId: string,
   input: CreateVisualInput,
   meta: RequestMeta
 ) {
   return prisma.$transaction(async (transaction) => {
+    const userId = await lockLayout(transaction);
     const existingCount = await transaction.dashboardVisual.count({
       where: { userId },
     });
@@ -142,7 +166,7 @@ export async function createVisualForUser(
     });
 
     await recordActivity(transaction, {
-      userId,
+      userId: actorId,
       module: "DASHBOARD",
       action: "DASHBOARD_VISUAL_CREATED",
       description: `Dashboard visual "${visual.title}" was created.`,
@@ -157,18 +181,14 @@ export async function createVisualForUser(
   });
 }
 
-export async function updateVisualForUser(
-  userId: string,
+export async function updateVisualOnSharedDashboard(
+  actorId: string,
   visualId: string,
   input: UpdateVisualInput,
   meta: RequestMeta
 ) {
   return prisma.$transaction(async (transaction) => {
-    /*
-     * Ownership by combined query: another user's visual and a missing
-     * one both come back 404, so layouts cannot be probed or modified
-     * across accounts.
-     */
+    const userId = await lockLayout(transaction);
     const existing = await transaction.dashboardVisual.findFirst({
       where: { id: visualId, userId },
     });
@@ -221,7 +241,7 @@ export async function updateVisualForUser(
     });
 
     await recordActivity(transaction, {
-      userId,
+      userId: actorId,
       module: "DASHBOARD",
       action: "DASHBOARD_VISUAL_UPDATED",
       description: `Dashboard visual "${visual.title}" was updated.`,
@@ -236,12 +256,13 @@ export async function updateVisualForUser(
   });
 }
 
-export async function deleteVisualForUser(
-  userId: string,
+export async function deleteVisualOnSharedDashboard(
+  actorId: string,
   visualId: string,
   meta: RequestMeta
 ) {
   return prisma.$transaction(async (transaction) => {
+    const userId = await lockLayout(transaction);
     const existing = await transaction.dashboardVisual.findFirst({
       where: { id: visualId, userId },
     });
@@ -250,12 +271,10 @@ export async function deleteVisualForUser(
       throw new HttpError(404, "Dashboard visual was not found.");
     }
 
-    // Pure per-user configuration with no history value: a hard delete,
-    // matching the frontend's delete-mode contract.
     await transaction.dashboardVisual.delete({ where: { id: existing.id } });
 
     await recordActivity(transaction, {
-      userId,
+      userId: actorId,
       module: "DASHBOARD",
       action: "DASHBOARD_VISUAL_DELETED",
       description: `Dashboard visual "${existing.title}" was deleted.`,
@@ -271,14 +290,15 @@ export async function deleteVisualForUser(
 
 /*
  * Reordering follows the FAQ contract: the request is the full desired
- * order of the user's visuals, applied atomically.
+ * order of the shared visuals, applied atomically.
  */
-export async function reorderVisualsForUser(
-  userId: string,
+export async function reorderVisualsOnSharedDashboard(
+  actorId: string,
   orderedVisualIds: string[],
   meta: RequestMeta
 ) {
   return prisma.$transaction(async (transaction) => {
+    const userId = await lockLayout(transaction);
     const visuals = await transaction.dashboardVisual.findMany({
       where: { userId },
       select: { id: true },
@@ -305,7 +325,7 @@ export async function reorderVisualsForUser(
     }
 
     await recordActivity(transaction, {
-      userId,
+      userId: actorId,
       module: "DASHBOARD",
       action: "DASHBOARD_VISUALS_REORDERED",
       description: "The dashboard visuals were rearranged.",
@@ -316,7 +336,7 @@ export async function reorderVisualsForUser(
 
     return transaction.dashboardVisual.findMany({
       where: { userId },
-      orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
   });
 }

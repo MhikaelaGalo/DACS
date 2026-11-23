@@ -14,13 +14,14 @@
  *     per-chart-type rules on visual create)
  *   - dashboard-visual persistence of the new catalog fields, and the
  *     rejection of legacy sample-data fields ("Month", "Sales (PHP)")
- *   - RBAC: farmers get nothing, IT staff get layouts but no analytics
+ *   - RBAC: staff can view the shared board, and general reporting has its own role checks.
  *
  * Hermetic: ANL-* fixtures (products, customers, orders, payments,
  * tickets, certificate requests) cleaned at start and end; the test
  * user's role is restored afterwards.
  */
 import { assertTestServer } from "./lib/test-env";
+import { getDashboardFixtureAccount } from "./lib/dashboard-fixture";
 
 import { readFileSync } from "node:fs";
 
@@ -115,7 +116,7 @@ async function getWebApiKey(projectId: string): Promise<string | null> {
   }
 }
 
-async function cleanupFixtures(testUserId: string | null): Promise<void> {
+async function cleanupFixtures(dashboardAccountId: string): Promise<void> {
   await prisma.payment.deleteMany({
     where: { order: { orderNumber: { startsWith: P } } },
   });
@@ -137,11 +138,9 @@ async function cleanupFixtures(testUserId: string | null): Promise<void> {
   await prisma.product.deleteMany({
     where: { productCode: { startsWith: P } },
   });
-  if (testUserId) {
-    await prisma.dashboardVisual.deleteMany({
-      where: { userId: testUserId, title: { startsWith: "ANL " } },
-    });
-  }
+  await prisma.dashboardVisual.deleteMany({
+    where: { userId: dashboardAccountId, title: { startsWith: "ANL " } },
+  });
 }
 
 async function setRole(
@@ -341,9 +340,10 @@ async function main(): Promise<void> {
     return finish();
   }
   const originalRole = dacsUser.role;
+  const dashboardAccount = await getDashboardFixtureAccount();
 
   try {
-    await cleanupFixtures(dacsUser.id);
+    await cleanupFixtures(dashboardAccount.id);
     await seedFixtures();
     record("Seed ANL-* fixtures", true);
 
@@ -361,7 +361,7 @@ async function main(): Promise<void> {
     const itFields = await api("/api/analytics/fields", { token });
     const itVisuals = await api("/api/dashboard/visuals", { token });
     record(
-      "A: IT staff -> no analytics fields (403) but own layout (200)",
+      "A: IT staff can read the shared layout while the general analytics catalog stays restricted",
       itFields.status === 403 && itVisuals.status === 200,
       `fields=${itFields.status} visuals=${itVisuals.status}`
     );
@@ -888,7 +888,7 @@ async function main(): Promise<void> {
      */
     const legacyRow = await prisma.dashboardVisual.create({
       data: {
-        userId: dacsUser.id,
+        userId: dashboardAccount.id,
         visualType: "clustered-column",
         title: "ANL legacy row",
         xField: "Month",
@@ -917,7 +917,7 @@ async function main(): Promise<void> {
       `api=${provinceRows.length} db=${provinceGroups[0].c}`
     );
   } finally {
-    await cleanupFixtures(dacsUser.id);
+    await cleanupFixtures(dashboardAccount.id);
     await setRole(dacsUser.id, originalRole);
     await prisma.$disconnect();
   }

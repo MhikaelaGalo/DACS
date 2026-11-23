@@ -8,10 +8,11 @@
  * Parent Stock ordering and certificates).
  */
 import { ApiError } from "@/lib/api";
+import { ROUTES } from "@/constants/routes";
 import {
   getMyProgress,
   listSeminarModules,
-  startModule,
+  type ApiMyProgress,
   type ApiModuleProgress,
   type ApiSeminarCompletion,
   type ApiSeminarModule,
@@ -69,6 +70,7 @@ export interface SeminarView {
   passingScore: number;
   /** Enrollment exists on the backend. */
   started: boolean;
+  registered: boolean;
   status: SeminarStatus;
   examPassed: boolean;
   completedAt?: string;
@@ -196,6 +198,7 @@ function toView(
     questionCount: module._count.questions,
     passingScore: module.passingScore,
     started,
+    registered: progress?.registered === true,
     status: completed ? "Completed" : started ? "In Progress" : "Not Started",
     examPassed,
     completedAt: progress?.completedAt ?? undefined,
@@ -242,22 +245,24 @@ export interface SeminarState {
   completion: SeminarCompletion;
 }
 
+export async function fetchSeminarProgress(): Promise<ApiMyProgress | null> {
+  try {
+    return await getMyProgress();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
 export async function fetchSeminarState(): Promise<SeminarState> {
-  /*
-   * The catalog and this farmer's progress are independent requests, so
-   * they go out together — awaiting one before the other made every
-   * seminar page wait for the sum of two round-trips instead of the
-   * slower one. A missing customer profile (404) still degrades to "no
-   * progress" without failing the catalog.
-   */
   const [modules, progress] = await Promise.all([
     listSeminarModules(),
-    getMyProgress().catch((error: unknown) => {
-      if (!(error instanceof ApiError) || error.status !== 404) throw error;
-      return null;
-    }),
+    fetchSeminarProgress(),
   ]);
+  return buildSeminarState(modules, progress);
+}
 
+export function buildSeminarState(modules: ApiSeminarModule[], progress: ApiMyProgress | null): SeminarState {
   let progressByNumber = new Map<number, ApiModuleProgress>();
   let completion: SeminarCompletion = EMPTY_COMPLETION;
   if (progress) {
@@ -298,10 +303,8 @@ export function canAccessView(view: SeminarView): boolean {
   return view.accessible;
 }
 
-/** Enrolls (idempotently) before entering a module the farmer may access
- *  but has not formally registered for (e.g. right after purchase). */
-export async function ensureStarted(view: SeminarView): Promise<void> {
-  if (!view.started) await startModule(view.moduleId);
+export function seminarRegistrationHref(view: SeminarView): string {
+  return `${ROUTES.seminarRegistration}?module=${encodeURIComponent(view.id)}`;
 }
 
 /**
@@ -330,13 +333,6 @@ export function lockReasonFor(view: SeminarView): string | undefined {
     return "Payment awaiting DACS approval.";
   }
   return `Purchase required — ${view.priceLabel}.`;
-}
-
-/** Enrolls (idempotently) in each selected module on the backend. */
-export async function enrollInModules(views: SeminarView[]): Promise<void> {
-  for (const view of views) {
-    await startModule(view.moduleId);
-  }
 }
 
 /* ------------------------------------------------------------------ */

@@ -10,10 +10,8 @@
  * concept (the backend's role set is a fixed enum) and never gate
  * anything.
  *
- * The effective matrix is also mirrored into the existing
- * localStorage key so the (admin) layout's synchronous page gating
- * (roleHasAccess) keeps working — that key is a CACHE of server truth,
- * refreshed on app load and after every matrix change.
+ * The admin layout uses the returned grants. The Settings cache also
+ * retains display-only columns for custom roles.
  */
 import { ROLE_BY_LABEL, ROLE_LABELS, type StaffRole } from "../auth";
 import { api } from "../api";
@@ -37,7 +35,7 @@ function mergeIntoState(matrix: ApiPermissionMatrix): PermissionState {
       const label = ROLE_LABELS[roleEnum as StaffRole];
       if (!label) continue;
       grants[permissionModule][label] =
-        matrix.grants[permissionModule]?.[roleEnum] ?? true;
+        matrix.grants[permissionModule]?.[roleEnum] === true;
     }
   }
   const next: PermissionState = { roles: state.roles, grants };
@@ -66,13 +64,4 @@ export async function updatePermission(
     { updates: [{ role: roleEnum, permissionModule, allowed }] }
   );
   return mergeIntoState(response.data);
-}
-
-/* App-load cache refresh; failures leave the last-known cache alone. */
-export async function refreshPermissionCache(): Promise<void> {
-  try {
-    await fetchPermissionMatrix();
-  } catch {
-    /* Offline or unauthorized — the cached grants keep gating. */
-  }
 }

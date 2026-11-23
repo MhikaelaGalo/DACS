@@ -7,6 +7,7 @@ import { archiveSeminarCertificate, correctSeminarCertificateName } from "../../
 import { HttpError } from "../../utils/httpError";
 import { detectImageType, detectVideoType } from "../../utils/imageType";
 import {
+  optionalEmail,
   optionalString,
   rejectUnexpectedFields,
   requiredString,
@@ -28,6 +29,7 @@ import {
   getSeminarModuleDetail,
   getSeminarModules,
   getSeminarProgressOverview,
+  registerSeminarModules,
   requestSeminarCertificate,
   reviewCertificateRequest,
   reorderSeminarVideos,
@@ -1022,6 +1024,53 @@ export async function listModules(
 /*
  * ---------- Farmer learning path ----------
  */
+
+export async function registerModules(
+  request: Request,
+  response: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const actor = requireActor(request, response);
+    if (!actor) return;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const textFields = [
+      "fullName", "contactNumber", "gender", "facebookName", "occupation",
+      "homeFarmAddress", "country",
+    ];
+    const dateFields = ["module2DateCompleted", "module3DateCompleted"];
+    rejectUnexpectedFields(body, [...textFields, ...dateFields, "email", "isReEnrollee", "moduleIds"]);
+    for (const field of textFields) {
+      const value = body[field];
+      if (typeof value !== "string" || !value.trim()) {
+        throw new HttpError(400, "Please complete all required seminar registration fields.", field);
+      }
+    }
+    if (!optionalEmail(body.email, "Email")) {
+      throw new HttpError(400, "Email is required.", "email");
+    }
+    if (typeof body.isReEnrollee !== "boolean") {
+      throw new HttpError(400, "Please indicate whether you are a re-enrollee.", "isReEnrollee");
+    }
+    if (body.isReEnrollee) {
+      for (const field of dateFields) {
+        const value = body[field];
+        const date = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(value) : null;
+        if (!date || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+          throw new HttpError(400, "Please enter a valid module completion date.", field);
+        }
+      }
+    }
+    if (!Array.isArray(body.moduleIds) || !body.moduleIds.length) {
+      throw new HttpError(400, "Please select a seminar module.", "moduleIds");
+    }
+    const moduleIds = [...new Set(body.moduleIds.map((id) => requiredUuid(id, "Module ID")))].sort();
+    await registerSeminarModules(actor.id, moduleIds);
+    response.status(200).json({ success: true, message: "Seminar registration confirmed." });
+  } catch (error) {
+    next(error);
+  }
+}
 
 export async function startModule(
   request: Request,

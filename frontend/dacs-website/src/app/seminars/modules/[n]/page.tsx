@@ -10,6 +10,7 @@ import {
   canAccessView,
   fetchSeminarViews,
   pickActiveView,
+  seminarRegistrationHref,
   type SeminarView,
 } from "@/services/seminar.service";
 
@@ -69,8 +70,8 @@ export default function ModuleSeminarVideoPage() {
           router.replace(`${ROUTES.seminars}?locked=${active.id}`);
           return;
         }
-        if (!active.started) {
-          router.replace(ROUTES.seminars);
+        if (!active.registered && !active.completed) {
+          router.replace(seminarRegistrationHref(active));
           return;
         }
         if (active.videos.length === 0) {

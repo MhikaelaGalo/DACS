@@ -3,6 +3,7 @@ import "dotenv/config";
 import { app } from "./app";
 import { prisma } from "./config/database";
 import { startPaymentDeadlineScheduler } from "./modules/orders/order.scheduler";
+import { startOrderConfirmationSender } from "./modules/orders/order-confirmation.sender";
 
 const port = Number(process.env.PORT) || 5000;
 
@@ -13,10 +14,12 @@ const server = app.listen(port, () => {
 // Backend-owned countdown: unpaid orders are cancelled on schedule even
 // when no request ever triggers the lazy on-read sweep.
 const stopPaymentDeadlineScheduler = startPaymentDeadlineScheduler();
+const stopOrderConfirmationSender = startOrderConfirmationSender();
 
 async function shutdown(): Promise<void> {
   console.log("Shutting down DACS backend...");
   stopPaymentDeadlineScheduler();
+  stopOrderConfirmationSender();
   server.close();
   await prisma.$disconnect();
   process.exit(0);

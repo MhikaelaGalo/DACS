@@ -11,14 +11,15 @@ import { ROUTES } from "@/constants/routes";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { errorMessage } from "@/lib/api";
 import { updateMyProfile, type ProfileFields } from "@/lib/api/account";
+import { listSeminarModules, submitSeminarRegistration } from "@/lib/api/seminars";
 import {
   seminarRegistrationSchema,
   type SeminarRegistrationFormValues,
 } from "@/lib/validation/seminar";
 import { splitFullName } from "@/services/auth.service";
 import {
-  enrollInModules,
-  fetchSeminarViews,
+  buildSeminarState,
+  setActiveSeminarId,
   type SeminarView,
 } from "@/services/seminar.service";
 
@@ -72,8 +73,11 @@ export default function SeminarRegistrationPage() {
   const router = useRouter();
   const { user, refreshUser } = useAuth();
   const [confirmed, setConfirmed] = useState(false);
+  const [continueHref, setContinueHref] = useState<string>(ROUTES.seminars);
   const [reEnrolleeOpen, setReEnrolleeOpen] = useState(false);
-  const [views, setViews] = useState<SeminarView[]>([]);
+  const [views, setViews] = useState<SeminarView[] | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const reEnrolleeRef = useRef<HTMLDivElement>(null);
@@ -99,8 +103,7 @@ export default function SeminarRegistrationPage() {
       isReEnrollee: true,
       module2DateCompleted: "",
       module3DateCompleted: "",
-      // No module is preselected — the farmer must choose one explicitly
-      // (the Figma frame's ticked Module 2 is a filled-in example state).
+      // Take Now supplies a module when the signed-in form is prefilled.
       seminarIds: [],
     },
   });
@@ -111,17 +114,17 @@ export default function SeminarRegistrationPage() {
   // Live module cards from the backend catalog.
   useEffect(() => {
     let cancelled = false;
-    fetchSeminarViews()
-      .then((result) => {
-        if (!cancelled) setViews(result);
+    listSeminarModules()
+      .then((modules) => {
+        if (!cancelled) setViews(buildSeminarState(modules, null).views);
       })
-      .catch(() => {
-        /* Submit reports the problem if the catalog is unreachable. */
+      .catch((error: unknown) => {
+        if (!cancelled) setCatalogError(errorMessage(error, "Unable to load the seminar catalog."));
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [catalogAttempt]);
 
   // Prefill the identity fields from the signed-in profile (they remain
   // editable; mappable edits are saved back to the profile on submit).
@@ -129,6 +132,7 @@ export default function SeminarRegistrationPage() {
   useEffect(() => {
     if (!user || prefilled.current) return;
     prefilled.current = true;
+    const requested = new URLSearchParams(window.location.search).get("module");
     reset({
       fullName: user.fullName,
       email: user.contactEmail ?? user.email,
@@ -141,7 +145,7 @@ export default function SeminarRegistrationPage() {
       isReEnrollee: false,
       module2DateCompleted: "",
       module3DateCompleted: "",
-      seminarIds: [],
+      seminarIds: requested && /^module-\d+$/.test(requested) ? [requested] : [],
     });
   }, [user, reset]);
 
@@ -170,13 +174,13 @@ export default function SeminarRegistrationPage() {
     setValue("seminarIds", next, { shouldValidate: true, shouldDirty: true });
   }
 
-  const onSubmit = async (values: SeminarRegistrationFormValues) => {
-    if (submitting) return;
+  const onSubmit = async ({ seminarIds, ...values }: SeminarRegistrationFormValues) => {
+    if (submitting || !views?.length) return;
     setServiceError(null);
     setSubmitting(true);
     try {
-      const chosen = views.filter((view) => values.seminarIds.includes(view.id));
-      if (chosen.length === 0) {
+      const chosen = views.filter((view) => seminarIds.includes(view.id));
+      if (!chosen.length || chosen.length !== seminarIds.length) {
         setServiceError(
           "The seminar catalog is unavailable right now. Please try again later."
         );
@@ -215,8 +219,14 @@ export default function SeminarRegistrationPage() {
           await refreshUser();
         }
       }
-      // The real enrollment: one idempotent start per selected module.
-      await enrollInModules(chosen);
+      await submitSeminarRegistration(values, chosen.map((view) => view.moduleId));
+      const requested = new URLSearchParams(window.location.search).get("module");
+      // The destination checks the customer's current access after registration.
+      const next = chosen.find((view) => view.id === requested);
+      if (next) {
+        setActiveSeminarId(next.id);
+        setContinueHref(next.videos.length ? "/seminars/modules/1" : "/seminars/exam");
+      }
       setConfirmed(true);
     } catch (error) {
       setServiceError(
@@ -388,12 +398,22 @@ export default function SeminarRegistrationPage() {
               only 68px from its right edge (-> 86 / 51 at 0.75), so only the
               left side gets the extra 36px. */}
           <div className="mt-[23px] flex flex-col gap-[19px] lg:pl-[36px]">
-            {views.length === 0 && (
-              <p className="text-[15px] leading-normal text-[#7d7d7d]">
-                Loading available modules...
+            {catalogError ? (
+              <div role="alert">
+                <p>{catalogError}</p>
+                <button type="button" className="mt-2 font-semibold underline" onClick={() => {
+                  setCatalogError(null);
+                  setCatalogAttempt((attempt) => attempt + 1);
+                }}>
+                  Try again
+                </button>
+              </div>
+            ) : !views?.length && (
+              <p role="status" className="text-[15px] leading-normal text-[#7d7d7d]">
+                {views === null ? "Loading available modules..." : "No seminar modules are currently published."}
               </p>
             )}
-            {views.map((seminar) => {
+            {views?.map((seminar) => {
               const selected = seminarIds.includes(seminar.id);
               return (
                 <button
@@ -456,7 +476,7 @@ export default function SeminarRegistrationPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !views?.length}
             className="mt-[60px] flex h-[64px] w-full cursor-pointer items-center justify-center rounded-[15px] bg-[#181818] shadow-[0px_0px_15px_0px_rgba(0,0,0,0.15)] disabled:opacity-60 lg:mt-[83px]"
           >
             <span className="text-[18px] font-bold leading-normal text-[#f4f4f4]">
@@ -479,9 +499,10 @@ export default function SeminarRegistrationPage() {
 
       {confirmed && (
         <RegistrationConfirmedModal
+          continueToModule={continueHref !== ROUTES.seminars}
           onClose={() => {
             setConfirmed(false);
-            router.push(ROUTES.seminars);
+            router.push(continueHref);
           }}
         />
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -34,8 +34,8 @@ import {
   toDashboardVisual,
 } from "@/lib/api/analytics";
 import { appendAudit } from "@/lib/audit";
-import { removeStorage, STORAGE_KEYS } from "@/lib/storage";
-import { useAutoRefresh, type LoadMode } from "@/lib/useAutoRefresh";
+import { DashboardEditingContext } from "@/lib/permissions";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import type { DashboardSummary, DashboardVisual } from "@/types/admin";
 
 /*
@@ -51,41 +51,11 @@ import type { DashboardSummary, DashboardVisual } from "@/types/admin";
  * KPIs, charts among charts — with dnd-kit animating the reflow. Only
  * the handle starts a drag, so chart tooltips/zoom keep working.
  *
- * Data source: visual DEFINITIONS live per-user on the backend
- * (/api/dashboard/visuals — a fresh user is seeded with the Figma
- * defaults once); chart/KPI VALUES come live from
- * GET /api/analytics/dashboard.
+ * All staff use the shared server layout. The Dashboard edit grant
+ * determines who can change it.
  */
 
 const MAX_VISUALS = 12;
-
-/*
- * Shipped default layout. Titles state what the backend actually
- * computes: the "Sales" KPIs count PAID orders (payment verified or
- * later), the seminar KPI counts approved certificate requests (DACS
- * records no seminar revenue), and the monthly chart covers the
- * trailing 12 months, not one fixed year.
- */
-const EMPTY_FIELDS = {
-  dataset: null,
-  xField: null,
-  xBucket: null,
-  yField: null,
-  aggregation: null,
-  legendField: null,
-} as const;
-
-const DEFAULT_VISUALS: DashboardVisual[] = [
-  { id: "kpi-ps", type: "kpi", title: "Total # of Sales for PS", ...EMPTY_FIELDS, builtin: "kpi-ps" },
-  { id: "kpi-f1", type: "kpi", title: "Total # of Sales for F1", ...EMPTY_FIELDS, builtin: "kpi-f1" },
-  { id: "kpi-vet", type: "kpi", title: "Total # of Sales for Vet Products", ...EMPTY_FIELDS, builtin: "kpi-vet" },
-  { id: "kpi-seminars", type: "kpi", title: "Seminar Certificates Issued", ...EMPTY_FIELDS, builtin: "kpi-seminars" },
-  { id: "monthly-sales", type: "clustered-column", title: "Total # of Sales per Month (Last 12 Months)", ...EMPTY_FIELDS, builtin: "monthly-sales" },
-  { id: "hatch-vs-orders", type: "clustered-column", title: "Hatch vs Customer Orders", ...EMPTY_FIELDS, builtin: "hatch-vs-orders" },
-  { id: "farmer-engagement", type: "line", title: "Farmer Engagement", ...EMPTY_FIELDS, builtin: "farmer-engagement" },
-  { id: "vet-inventory", type: "clustered-column", title: "Vet Products Inventory Levels", ...EMPTY_FIELDS, builtin: "vet-inventory" },
-  { id: "cert-map", type: "filled-map", title: "Certification Status by Region", ...EMPTY_FIELDS, builtin: "cert-map" },
-];
 
 /*
  * Sortable card wrapper: carries the flex-item sizing classes so the
@@ -138,6 +108,12 @@ function SortableVisual({
 }
 
 export default function DashboardPage() {
+  const canEdit = useContext(DashboardEditingContext);
+  // A grant change also closes open editors and cancels any active drag.
+  return <Dashboard key={canEdit ? "editable" : "view-only"} canEdit={canEdit} />;
+}
+
+function Dashboard({ canEdit }: { canEdit: boolean }) {
   const { showToast } = useToast();
   const [visuals, setVisuals] = useState<DashboardVisual[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -148,81 +124,58 @@ export default function DashboardPage() {
   const [building, setBuilding] = useState(false);
   /* Bumped on refresh so custom visuals re-run their analytics query. */
   const [refreshToken, setRefreshToken] = useState(0);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const editInFlight = useRef(false);
+  const readVersion = useRef(0);
 
-  const load = useCallback(async () => {
-    /* Analytics may 403 for IT Staff (visual layouts are per-staff but
-       the numbers are Owner/Admin) — the board still renders. */
-    const [visualsResult, summaryResult] = await Promise.allSettled([
-      listDashboardVisuals(),
-      getDashboardSummary(),
-    ]);
-
-    if (summaryResult.status === "fulfilled") {
-      setSummary(summaryResult.value);
-      setAnalyticsError(null);
-    } else {
-      setAnalyticsError(
-        errorMessage(summaryResult.reason, "Unable to load analytics data.")
-      );
-    }
-
-    if (visualsResult.status === "fulfilled") {
-      let list = visualsResult.value;
-      if (list.length === 0) {
-        /* First visit: provision the Figma default layout server-side. */
-        for (const preset of DEFAULT_VISUALS) {
-          try {
-            await createDashboardVisual({
-              visualType: preset.type,
-              title: preset.title,
-              builtin: preset.builtin,
-            });
-          } catch {
-            break;
-          }
-        }
-        list = await listDashboardVisuals().catch(() => []);
+  const loadLayout = useCallback(async () => {
+    const version = ++readVersion.current;
+    try {
+      const { data } = await listDashboardVisuals();
+      if (version !== readVersion.current) return;
+      setVisuals(data.map(toDashboardVisual));
+      setLayoutError(null);
+    } catch (error) {
+      if (version === readVersion.current) {
+        setLayoutError(errorMessage(error, "Unable to load the shared dashboard layout."));
       }
-      setVisuals(list.map(toDashboardVisual));
-    } else {
-      showToast(
-        errorMessage(visualsResult.reason, "Unable to load your dashboard layout."),
-        "error"
-      );
+    } finally {
+      if (version === readVersion.current) setLoading(false);
     }
-    setLoading(false);
-  }, [showToast]);
-
-  useEffect(() => {
-    /* The backend is the source of truth now — drop the old mock key. */
-    removeStorage(STORAGE_KEYS.visuals);
   }, []);
 
-  /*
-   * KPI cards and builtin charts read `summary`; custom visuals query
-   * /api/analytics/query keyed on `refreshToken` — refreshing both from
-   * the same tick keeps every dashboard number on the same backend
-   * snapshot. The visual DEFINITIONS (layout) are per-user and only
-   * change through this page's own actions, so they load once.
-   */
-  const loadDashboard = useCallback(
-    async (mode: LoadMode) => {
+  useAutoRefresh(async (mode) => {
+    const layout = editInFlight.current ? undefined : loadLayout();
+    try {
+      const next = await getDashboardSummary();
+      setSummary((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
+      setAnalyticsError(null);
+    } catch (error) {
       if (mode === "initial") {
-        await load();
-        return;
+        setAnalyticsError(errorMessage(error, "Unable to load analytics data."));
       }
-      try {
-        setSummary(await getDashboardSummary());
-        setAnalyticsError(null);
-      } catch {
-        /* Keep the last good numbers; the next tick retries. */
-      }
-      setRefreshToken((token) => token + 1);
-    },
-    [load]
-  );
+    }
+    if (mode === "refresh") setRefreshToken((token) => token + 1);
+    await layout;
+  }, 15_000);
 
-  useAutoRefresh(loadDashboard, 15_000);
+  async function saveLayout(change: () => Promise<void>) {
+    if (!canEdit || editInFlight.current) return;
+    editInFlight.current = true;
+    ++readVersion.current;
+    setSaving(true);
+    try {
+      await change();
+    } catch (error) {
+      showToast(errorMessage(error, "Unable to save the shared dashboard."), "error");
+    } finally {
+      // Reload after success or conflict so edits from other accounts remain visible.
+      await loadLayout();
+      editInFlight.current = false;
+      setSaving(false);
+    }
+  }
 
   const kpis = visuals.filter((visual) => visual.type === "kpi");
   const charts = visuals.filter((visual) => visual.type !== "kpi");
@@ -233,51 +186,33 @@ export default function DashboardPage() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  function reorder(group: "kpi" | "chart") {
-    return ({ active, over }: DragEndEvent) => {
-      if (!over || active.id === over.id) return;
-      const list = group === "kpi" ? kpis : charts;
-      const oldIndex = list.findIndex((entry) => entry.id === active.id);
-      const newIndex = list.findIndex((entry) => entry.id === over.id);
-      if (oldIndex < 0 || newIndex < 0) return;
-      const moved = arrayMove(list, oldIndex, newIndex);
-      const previous = visuals;
-      const next = group === "kpi" ? [...moved, ...charts] : [...kpis, ...moved];
-      setVisuals(next);
-      void reorderDashboardVisuals(next.map((entry) => entry.id))
-        .then(() => {
-          appendAudit("Dashboard", "VISUAL_LAYOUT_SAVED", "Rearranged the dashboard visuals.");
-          showToast("Dashboard layout saved.");
-        })
-        .catch((error) => {
-          setVisuals(previous);
-          showToast(
-            errorMessage(error, "Unable to save the layout. Please try again."),
-            "error"
-          );
-        });
-    };
+  function reorder(group: "kpi" | "chart", { active, over }: DragEndEvent) {
+    if (!canEdit || !over || active.id === over.id) return;
+    const list = group === "kpi" ? kpis : charts;
+    const oldIndex = list.findIndex((entry) => entry.id === active.id);
+    const newIndex = list.findIndex((entry) => entry.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const moved = arrayMove(list, oldIndex, newIndex);
+    const next = group === "kpi" ? [...moved, ...charts] : [...kpis, ...moved];
+    void saveLayout(async () => {
+      await reorderDashboardVisuals(next.map((entry) => entry.id));
+      appendAudit("Dashboard", "VISUAL_LAYOUT_SAVED", "Rearranged the dashboard visuals.");
+      showToast("Dashboard layout saved.");
+    });
   }
 
   async function removeVisual(visual: DashboardVisual) {
-    try {
+    await saveLayout(async () => {
       await deleteDashboardVisual(visual.id);
-      setVisuals((current) => current.filter((entry) => entry.id !== visual.id));
       appendAudit("Dashboard", "VISUAL_DELETED", `Deleted visual "${visual.title}".`);
       showToast("Visual deleted successfully.");
-    } catch (error) {
-      showToast(
-        errorMessage(error, "Unable to delete this visual. Please try again."),
-        "error"
-      );
-    } finally {
-      setPendingDelete(null);
-    }
+    });
+    setPendingDelete(null);
   }
 
   async function addVisual(visual: DashboardVisual) {
-    try {
-      const created = await createDashboardVisual({
+    await saveLayout(async () => {
+      await createDashboardVisual({
         visualType: visual.type,
         title: visual.title,
         dataset: visual.dataset,
@@ -287,19 +222,13 @@ export default function DashboardPage() {
         aggregation: visual.aggregation,
         legendField: visual.legendField,
       });
-      setVisuals((current) => [...current, toDashboardVisual(created)]);
       setBuilding(false);
       appendAudit("Dashboard", "VISUAL_CREATED", `Created visual "${visual.title}".`);
-    } catch (error) {
-      showToast(
-        errorMessage(error, "Unable to create this visual. Please try again."),
-        "error"
-      );
-    }
+    });
   }
 
-  const DeleteBadge = ({ visual }: { visual: DashboardVisual }) =>
-    deleteMode ? (
+  function deleteBadge(visual: DashboardVisual) {
+    return canEdit && deleteMode ? (
       <button
         type="button"
         aria-label={`Delete ${visual.title}`}
@@ -309,12 +238,13 @@ export default function DashboardPage() {
         <X size={16} className="text-dacs-dark" />
       </button>
     ) : null;
+  }
 
   return (
     <>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 lg:mb-8">
         <h1 className="text-2xl font-bold leading-tight sm:text-3xl lg:text-[40px]">Dashboard</h1>
-        <div className="flex items-center gap-4">
+        {canEdit && !loading && !layoutError && <div className="flex items-center gap-4">
           {deleteMode ? (
             <button
               type="button"
@@ -352,12 +282,12 @@ export default function DashboardPage() {
               </button>
             </>
           )}
-        </div>
+        </div>}
       </div>
 
-      {analyticsError && (
+      {(layoutError || analyticsError) && (
         <p className="mb-6 rounded-dacs-card border border-dashed border-dacs-dark/30 px-6 py-4 text-center text-sm text-dacs-muted">
-          {analyticsError}
+          {layoutError || analyticsError}
         </p>
       )}
 
@@ -375,7 +305,7 @@ export default function DashboardPage() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragEnd={reorder("kpi")}
+          onDragEnd={(event) => reorder("kpi", event)}
         >
           <SortableContext items={kpis.map((visual) => visual.id)} strategy={rectSortingStrategy}>
             <div className="flex flex-wrap justify-center gap-6">
@@ -383,10 +313,10 @@ export default function DashboardPage() {
                 <SortableVisual
                   key={visual.id}
                   visual={visual}
-                  disabled={deleteMode}
+                  disabled={!canEdit || saving || deleteMode}
                   className="relative min-w-[220px] max-w-[360px] flex-1"
                 >
-                  <DeleteBadge visual={visual} />
+                  {deleteBadge(visual)}
                   <KpiValue
                     visual={visual}
                     summary={summary}
@@ -403,7 +333,7 @@ export default function DashboardPage() {
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
-        onDragEnd={reorder("chart")}
+        onDragEnd={(event) => reorder("chart", event)}
       >
         <SortableContext items={charts.map((visual) => visual.id)} strategy={rectSortingStrategy}>
           <div className="mt-6 flex flex-wrap justify-center gap-6">
@@ -411,10 +341,10 @@ export default function DashboardPage() {
               <SortableVisual
                 key={visual.id}
                 visual={visual}
-                disabled={deleteMode}
+                disabled={!canEdit || saving || deleteMode}
                 className="relative w-full min-w-0 rounded-dacs-card bg-white p-4 shadow-dacs-card sm:p-6 xl:w-[calc(50%-12px)]"
               >
-                <DeleteBadge visual={visual} />
+                {deleteBadge(visual)}
                 <h2 className="mb-4 text-center text-lg font-bold">{visual.title}</h2>
                 <VisualBody
                   visual={visual}
@@ -427,9 +357,9 @@ export default function DashboardPage() {
         </SortableContext>
       </DndContext>
 
-      {!loading && visuals.length === 0 && (
+      {!loading && !layoutError && visuals.length === 0 && (
         <p className="rounded-dacs-card border border-dashed border-dacs-dark/30 py-24 text-center text-dacs-muted">
-          No visuals on the dashboard. Click “+ Create Visual” to add one.
+          No visuals on the dashboard.{canEdit && " Click + Create Visual to add one."}
         </p>
       )}
 

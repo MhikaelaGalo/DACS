@@ -7,6 +7,8 @@ import { formatLongDate, formatPeso, formatSlashDate } from "@/lib/format";
 import type { ApiOrderDetail } from "@/lib/api/orders";
 import type { OrderQueueRow } from "@/types/admin";
 
+const quotationPeso = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
+
 /*
  * The 👁 View state (mockups OCQ-1..4): the order quotation exactly as
  * designed per order type — VET (product/qty/unit/price + DALG fee),
@@ -160,16 +162,16 @@ export function QuotationModal({
             </tr>
           </thead>
           <tbody>
-            {order.vetItems.map((item) => (
-              <tr key={item.product} className="border-b border-dacs-light">
+            {order.vetItems.map((item, index) => (
+              <tr key={`${item.productId ?? item.product}-${index}`} className="border-b border-dacs-light">
                 <td className="px-4 py-3 text-left">{item.product}</td>
                 <td className="px-4 py-3 text-center">{item.quantity}</td>
                 <td className="px-4 py-3 text-center">{item.unit}</td>
                 <td className="px-4 py-3 text-center">
-                  {formatPeso(item.price)}.00
+                  {quotationPeso.format(item.price)}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {formatPeso(item.quantity * item.price)}.00
+                  {quotationPeso.format(item.quantity * item.price)}
                 </td>
               </tr>
             ))}
@@ -199,10 +201,10 @@ export function QuotationModal({
                 <td className="px-4 py-3 text-left">{item.product}</td>
                 <td className="px-4 py-3 text-center">{item.quantity}</td>
                 <td className="px-4 py-3 text-center">
-                  {formatPeso(item.priceMin)} - {formatPeso(item.priceMax)}
+                  {quotationPeso.format(item.unitPrice)}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {formatPeso(item.quantity * item.unitPrice)}.00
+                  {quotationPeso.format(item.quantity * item.unitPrice)}
                 </td>
               </tr>
             ))}
@@ -236,7 +238,7 @@ export function QuotationModal({
                   <td className="px-4 py-3 text-center">Seminar</td>
                   <td className="px-4 py-3 text-center">{item.quantity}</td>
                   <td className="px-4 py-3 text-right">
-                    {formatPeso(item.price)}.00
+                    {quotationPeso.format(item.price)}
                   </td>
                 </tr>
               ))}
@@ -283,7 +285,7 @@ export function QuotationModal({
                   <td className="px-3 py-3 text-center">{formatPeso(item.amtF)}</td>
                   <td className="px-3 py-3 text-center">{formatPeso(item.amtM)}</td>
                   <td className="px-3 py-3 text-right">
-                    {formatPeso(item.amtF + item.amtM)}.00
+                    {quotationPeso.format(item.amtF + item.amtM)}
                   </td>
                 </tr>
               ))}
@@ -307,7 +309,7 @@ export function QuotationModal({
         <div className="flex w-[360px] items-center justify-between">
           <span className="font-bold text-dacs-red">TOTAL AMOUNT DUE</span>
           <span className="text-lg font-bold text-dacs-red">
-            {formatPeso(order.totalAmount)}.00
+            {quotationPeso.format(order.totalAmount)}
           </span>
         </div>
       </div>
