@@ -26,6 +26,7 @@ import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import {
   deleteHistoricalFile,
+  downloadHistoricalWorkbook,
   listHistoricalFiles,
   uploadHistoricalFile,
   type ApiHistoricalFile,
@@ -39,7 +40,7 @@ import type { HistoricalFileRow } from "@/types/admin";
 /*
  * Historical Data file manager (Figma): search + funnel + trash +
  * Upload File; rows have selection checkboxes, expandable folders and
- * per-row downloads. Clicking a file name opens a Google Drive-style
+ * per-file downloads. Clicking a file name opens a Google Drive-style
  * in-page preview (PDF/images/CSV/plain text) instead of navigating
  * away; formats the browser can't render fall back to a download
  * prompt.
@@ -266,7 +267,10 @@ export default function HistoricalDataPage() {
   const refresh = useCallback(async () => {
     try {
       const files = await listHistoricalFiles();
-      setRows(withFolders(files.map(toRow)));
+      const visibleFiles = files.filter(
+        (file) => file.category?.trim().toLowerCase() !== "legacy records"
+      );
+      setRows(withFolders(visibleFiles.map(toRow)));
       setLoadError(null);
     } catch (error) {
       setLoadError(
@@ -405,12 +409,15 @@ export default function HistoricalDataPage() {
     }
   }
 
-  async function downloadRow(row: HistoricalFileRow) {
-    /*
-     * Server-backed rows stream the stored file (fetched as a blob so
-     * the browser saves it under its original name); synthetic folder
-     * rows generate a small CSV summary instead.
-     */
+  async function downloadFile(row: HistoricalFileRow) {
+    if (row.originalName.toLowerCase().endsWith(".xlsx")) {
+      try {
+        await downloadHistoricalWorkbook(row);
+      } catch (error) {
+        showToast(errorMessage(error, "Unable to download this workbook."), "error");
+      }
+      return;
+    }
     const contentUrl = contentUrlFor(row);
     if (contentUrl) {
       try {
@@ -430,10 +437,7 @@ export default function HistoricalDataPage() {
       }
       return;
     }
-    const content =
-      row.itemCount !== null
-        ? `Folder,${row.originalName}\nItems,${row.itemCount}\n`
-        : `File,${row.originalName}\nModified,${row.createdAt}\nSize,${formatSize(row.sizeBytes)}\n`;
+    const content = `File,${row.originalName}\nModified,${row.createdAt}\nSize,${formatSize(row.sizeBytes)}\n`;
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -489,7 +493,7 @@ export default function HistoricalDataPage() {
         <button
           type="button"
           aria-label={`Download ${file.originalName}`}
-          onClick={() => void downloadRow(file)}
+          onClick={() => void downloadFile(file)}
           className="text-dacs-muted hover:text-dacs-dark"
         >
           <Download size={18} />
@@ -632,14 +636,6 @@ export default function HistoricalDataPage() {
                   {files.filter((file) => file.category === folder.category).length}{" "}
                   items
                 </span>
-                <button
-                  type="button"
-                  aria-label={`Download ${folder.originalName}`}
-                  onClick={() => void downloadRow(folder)}
-                  className="text-dacs-muted hover:text-dacs-dark"
-                >
-                  <Download size={18} />
-                </button>
               </div>
 
               {open &&
@@ -671,7 +667,7 @@ export default function HistoricalDataPage() {
             <PreviewBody
               row={previewFile}
               url={contentUrlFor(previewFile)}
-              onDownload={() => void downloadRow(previewFile)}
+              onDownload={() => void downloadFile(previewFile)}
             />
           </div>
 

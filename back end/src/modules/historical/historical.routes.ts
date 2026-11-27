@@ -6,6 +6,7 @@ import { loadDacsUser } from "../../middleware/loadDacsUser";
 import { uploadLimiter } from "../../middleware/rateLimit";
 import { uploadSingleSpreadsheet } from "../../middleware/uploadImage";
 import {
+  downloadFile,
   getFile,
   getRecord,
   listErrors,
@@ -25,8 +26,7 @@ historicalRouter.use(loadDacsUser);
 
 /*
  * Historical records are an internal archive: everything is staff-only
- * (Owner + Administrative Staff). Downloads use the storageUrl served
- * by the /uploads static route.
+ * (Owner + Administrative Staff), including workbook downloads.
  */
 historicalRouter.use(authorizeRoles("OWNER_EXECUTIVE", "ADMINISTRATIVE_STAFF"));
 
@@ -40,6 +40,7 @@ historicalRouter.post(
 historicalRouter.get("/files", listFiles);
 
 historicalRouter.get("/files/:fileId", getFile);
+historicalRouter.get("/files/:fileId/download", downloadFile);
 
 // Re-import (backfill) is as heavy as an upload, so it shares the
 // upload throttle.

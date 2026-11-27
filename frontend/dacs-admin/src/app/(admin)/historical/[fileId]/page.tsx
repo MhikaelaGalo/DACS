@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { errorMessage } from "@/lib/api";
 import {
+  downloadHistoricalWorkbook,
   getHistoricalFile,
   reimportHistoricalFile,
   type ApiHistoricalFile,
@@ -157,15 +158,16 @@ export default function HistoricalFileDetailPage() {
 
         {file && (
           <div className="flex items-center gap-3">
-            <a
-              href={file.storageUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={() => void downloadHistoricalWorkbook(file).catch((error) =>
+                showToast(errorMessage(error, "Unable to download this workbook."), "error")
+              )}
               className="flex items-center gap-2 rounded-2xl border border-dacs-dark/40 px-5 py-2.5 font-semibold hover:bg-dacs-light/50"
             >
               <Download size={16} />
               Download
-            </a>
+            </button>
             <button
               type="button"
               disabled={reimporting}

@@ -2,7 +2,7 @@
  * Historical Data endpoints (staff only: Owner + Administrative Staff).
  * Mirrors back end/src/modules/historical.
  */
-import { api } from "../api";
+import { api, apiFetchBlob } from "../api";
 
 export interface ApiSpreadsheetImport {
   id: string;
@@ -280,6 +280,18 @@ export interface ApiHistoricalFile {
   updatedAt: string;
   uploadedBy?: { id: string; email: string } | null;
   imports: ApiSpreadsheetImport[];
+}
+
+export async function downloadHistoricalWorkbook(file: { id: string; originalName: string }): Promise<void> {
+  const blob = await apiFetchBlob(`/api/historical/files/${encodeURIComponent(file.id)}/download`);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.originalName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function listHistoricalFiles(filters?: {

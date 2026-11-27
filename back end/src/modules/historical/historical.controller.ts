@@ -8,6 +8,7 @@ import {
 } from "../../utils/validation";
 import {
   deleteHistoricalFile,
+  getHistoricalDownload,
   getHistoricalFile,
   getHistoricalRecord,
   getImportErrors,
@@ -186,6 +187,21 @@ export async function getFile(
       success: true,
       data: file,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function downloadFile(
+  request: Request,
+  response: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const fileId = requiredUuid(request.params.fileId, "The file ID");
+    const file = await getHistoricalDownload(fileId);
+    response.setHeader("Cache-Control", "private, no-store");
+    response.attachment(file.originalName).send(file.contents);
   } catch (error) {
     next(error);
   }
